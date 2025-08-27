@@ -1,0 +1,43 @@
+{
+  "means": {
+    "hour_of_day": 11.454475,
+    "total_room_usage": 0.14092870028295,
+    "lights_currently_on": 0.33035,
+    "space_occupied": 0.50885,
+    "solar_surplus": -0.956158481249475,
+    "cloudCover": 0.19947949999999998,
+    "visibility": 9.47258375
+  },
+  "stds": {
+    "hour_of_day": 4.009523585335386,
+    "total_room_usage": 0.17574898782999218,
+    "lights_currently_on": 0.4703449883969515,
+    "space_occupied": 0.4999279205027972,
+    "solar_surplus": 0.7200383371800919,
+    "cloudCover": 0.27055883672842684,
+    "visibility": 1.3129639860245317
+  },
+  "mins": {
+    "hour_of_day": 5.0,
+    "total_room_usage": 0.002483367,
+    "lights_currently_on": 0.0,
+    "space_occupied": 0.0,
+    "solar_surplus": -7.735933333,
+    "cloudCover": 0.0,
+    "visibility": 0.83
+  },
+  "maxs": {
+    "hour_of_day": 18.0,
+    "total_room_usage": 2.0726,
+    "lights_currently_on": 1.0,
+    "space_occupied": 1.0,
+    "solar_surplus": 0.49694999999999995,
+    "cloudCover": 1.0,
+    "visibility": 10.0
+  },
+  "energy_thresholds": {
+    "lights_on_threshold": 0.1,
+    "high_consumption_threshold": 0.4119750300999999,
+    "average_consumption": 0.14092870028295
+  }
+}

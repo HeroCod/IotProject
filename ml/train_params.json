@@ -1,0 +1,84 @@
+{
+  "model_type": "energy_saving_lighting_control",
+  "version": "3.0",
+  "objective": "minimize_lighting_energy_consumption",
+  "dataset_source": "Real Smart Home Energy Dataset (Kaggle)",
+  "accuracy": 1.0,
+  "energy_efficiency_improvement": "45.6_percent",
+  "feature_importance": {
+    "hour_of_day": 0.042958958635526914,
+    "total_room_usage": 0.5872724798999158,
+    "lights_currently_on": 0.23702533856222804,
+    "space_occupied": 0.09098397493443358,
+    "solar_surplus": 0.032955672582557625,
+    "cloudCover": 0.00520863944189526,
+    "visibility": 0.003594935943442753
+  },
+  "energy_saving_rules": {
+    "objective": "minimize_lighting_energy_consumption",
+    "target_reduction": "45_percent_energy_savings",
+    "decision_logic": "turn_lights_OFF_when_wasteful",
+    "lights_on_threshold": 0.1,
+    "high_consumption_threshold": 0.4119750300999999,
+    "occupancy_required": true,
+    "peak_waste_hours": [
+      6,
+      7,
+      8,
+      9,
+      11
+    ],
+    "daytime_efficiency_start": 9,
+    "daytime_efficiency_end": 15,
+    "turn_off_when_empty": true,
+    "reduce_excessive_consumption": true,
+    "nighttime_efficiency": true,
+    "solar_available_threshold": 0.0,
+    "weather_efficiency": true
+  },
+  "energy_metrics": {
+    "total_potential_savings": 3200.102479486,
+    "energy_capture_rate": 0.0,
+    "average_savings_per_opportunity": 0.38435052600120106,
+    "lighting_waste_reduction": "45.4_percent",
+    "model_efficiency_score": 0.0
+  },
+  "training_info": {
+    "dataset_size": 50000,
+    "features_used": [
+      "hour_of_day",
+      "total_room_usage",
+      "lights_currently_on",
+      "space_occupied",
+      "solar_surplus",
+      "cloudCover",
+      "visibility"
+    ],
+    "energy_saving_rate": 0.16652,
+    "model_algorithm": "RandomForest_EnergySaving",
+    "training_samples": 40000,
+    "test_samples": 10000,
+    "lights_on_detection_rate": 0.33028
+  },
+  "deployment_function": {
+    "description": "Energy-saving lighting control for IoT devices",
+    "logic": "LED OFF if: (lights_ON AND (empty_space OR excessive_consumption OR waste_hours))",
+    "energy_priority": "Consumption Reduction > Occupancy Comfort > Environmental Context",
+    "computational_complexity": "O(1) - constant time decision",
+    "energy_loss_function": "Minimize kWh waste + Penalize comfort disruption"
+  },
+  "iot_optimization": {
+    "memory_efficient": true,
+    "fast_inference": true,
+    "energy_focused": true,
+    "offline_capable": true,
+    "real_time_consumption_monitoring": true
+  },
+  "energy_thresholds": {
+    "lights_on_detection": 0.1,
+    "high_consumption_warning": 0.4119750300999999,
+    "occupancy_required": true,
+    "waste_detection_sensitivity": "high",
+    "energy_conservation_priority": "maximum"
+  }
+}
