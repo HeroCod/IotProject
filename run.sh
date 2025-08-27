@@ -16,7 +16,7 @@ case "$1" in
     echo "[*] Initializing project and system from scratch..."
     echo "[*] Installing dependencies..."
     sudo apt-get update
-    sudo apt-get install install ant git git-lfs ca-certificates curl -y
+    sudo apt-get install install ant git git-lfs ant ca-certificates curl -y
     # Install Docker
     sudo install -m 0755 -d /etc/apt/keyrings
     sudo curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
@@ -31,7 +31,7 @@ case "$1" in
     sudo usermod -aG docker $USER
     newgrp docker
     echo "[*] Cloning Contiki-NG repository..."
-    if [ ! -d "contiki-ng" ]; then
+    if [ ! -d "contiki-ng/tools" ]; then
       git clone --recurse-submodules https://github.com/contiki-ng/contiki-ng.git ./contiki-ng
     fi
     echo "[*] Init done."
@@ -57,9 +57,17 @@ case "$1" in
     make node1 TARGET=cooja
     make node2 TARGET=cooja
     make node3 TARGET=cooja
-    echo "[*] Launching Cooja..."
-    cd ./contiki-ng/tools/cooja
-    ant run
+    cd ../contiki-ng/tools/cooja
+
+    # If user passed --load <file>, use it
+    if [ "$2" = "--load" ] && [ -n "$3" ]; then
+      SIM_FILE=$PROJECT_DIR/$3
+      echo "[*] Launching Cooja with simulation file: $SIM_FILE"
+      ./gradlew run --args="$SIM_FILE"
+    else
+      echo "[*] Launching empty Cooja..."
+      ./gradlew run
+    fi
     ;;
 
   flash)
