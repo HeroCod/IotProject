@@ -29,9 +29,9 @@ static void mqtt_event(struct mqtt_connection *m, mqtt_event_t event, void *data
       break;
     case MQTT_EVENT_PUBLISH: {
       struct mqtt_message *msg = (struct mqtt_message *)data;
-      LOG_INFO("Incoming actuator cmd: %.*s\n", msg->payload_length, (char *)msg->payload);
-      if(msg->payload_length > 0) {
-        if(strncmp((char *)msg->payload, "on", 2) == 0) {
+      LOG_INFO("Incoming actuator cmd: %.*s\n", msg->payload_chunk_length, (char *)msg->payload_chunk);
+      if(msg->payload_chunk_length > 0) {
+        if(strncmp((char *)msg->payload_chunk, "on", 2) == 0) {
           leds_on(LEDS_GREEN);
         } else {
           leds_off(LEDS_GREEN);
@@ -51,7 +51,7 @@ PROCESS_THREAD(node1_process, ev, data) {
   PROCESS_BEGIN();
 
   mqtt_register(&conn, &node1_process, MQTT_CLIENT_ID, mqtt_event, 256);
-  mqtt_connect(&conn, MQTT_BROKER_IP, MQTT_BROKER_PORT, 1000);
+  mqtt_connect(&conn, MQTT_BROKER_IP, MQTT_BROKER_PORT, 1000, 1);
 
   etimer_set(&timer, CLOCK_SECOND * 10);
 

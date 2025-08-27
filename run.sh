@@ -12,6 +12,30 @@
 PROJECT_DIR=$(pwd)
 
 case "$1" in
+  init)
+    echo "[*] Initializing project and system from scratch..."
+    echo "[*] Installing dependencies..."
+    sudo apt-get update
+    sudo apt-get install install ant git git-lfs ca-certificates curl -y
+    # Install Docker
+    sudo install -m 0755 -d /etc/apt/keyrings
+    sudo curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
+    sudo chmod a+r /etc/apt/keyrings/docker.asc
+    echo \
+        "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
+        $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}") stable" | \
+        sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+    sudo apt-get update
+    sudo apt-get install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin -y
+    sudo groupadd docker
+    sudo usermod -aG docker $USER
+    newgrp docker
+    echo "[*] Cloning Contiki-NG repository..."
+    if [ ! -d "contiki-ng" ]; then
+      git clone --recurse-submodules https://github.com/contiki-ng/contiki-ng.git ./contiki-ng
+    fi
+    echo "[*] Init done."
+  ;;
   build)
     echo "[*] Building Docker containers..."
     docker compose build
@@ -30,11 +54,11 @@ case "$1" in
   sim)
     echo "[*] Building firmware for simulated nodes..."
     cd contiki_nodes
-    make node1.node
-    make node2.node
-    make node3.node
+    make node1 TARGET=cooja
+    make node2 TARGET=cooja
+    make node3 TARGET=cooja
     echo "[*] Launching Cooja..."
-    cd ../contiki-ng/tools/cooja
+    cd ./contiki-ng/tools/cooja
     ant run
     ;;
 
