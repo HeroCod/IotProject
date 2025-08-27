@@ -1,0 +1,8 @@
+{
+  "sensors": [
+    {"id": "light1", "type": "light", "topic": "sensors/light1"}
+  ],
+  "actuators": [
+    {"id": "led1", "type": "led", "topic": "actuators/led1"}
+  ]
+}

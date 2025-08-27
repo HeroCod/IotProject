@@ -1,0 +1,54 @@
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: mqtt-broker
+    ports:
+      - "1883:1883"   # MQTT broker port
+      - "9001:9001"   # Websocket (optional)
+    volumes:
+      - ./config/mosquitto.conf:/mosquitto/config/mosquitto.conf
+
+  mysql:
+    image: mysql:8
+    container_name: mysql-db
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: iotdb
+      MYSQL_USER: iotuser
+      MYSQL_PASSWORD: iotpass
+    ports:
+      - "3306:3306"
+    volumes:
+      - db_data:/var/lib/mysql
+
+  collector:
+    build: ./collector
+    container_name: collector-app
+    depends_on:
+      - mosquitto
+      - mysql
+    environment:
+      MQTT_BROKER: mosquitto
+      MQTT_PORT: 1883
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: iotuser
+      MYSQL_PASSWORD: iotpass
+      MYSQL_DB: iotdb
+
+  cli:
+    build: ./cli
+    container_name: cli-app
+    stdin_open: true
+    tty: true
+    depends_on:
+      - mysql
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_USER: iotuser
+      MYSQL_PASSWORD: iotpass
+      MYSQL_DB: iotdb
+
+volumes:
+  db_data:

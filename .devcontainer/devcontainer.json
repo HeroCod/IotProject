@@ -2,7 +2,7 @@
   "name": "Contiki NG",
   "dockerComposeFile": "docker-compose.yml",
   "service": "contiki-ng",
-  "workspaceFolder": "/home/user/contiki-ng",
+  "workspaceFolder": "/home/user/contiki-ng/workspace",
   "shutdownAction": "stopCompose",
   "initializeCommand": "xhost +local:docker"
 }
