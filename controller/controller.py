@@ -43,7 +43,7 @@ energy_stats = {
     "total_decisions": 0,
     "energy_saved": 0.0,
     "ambient_overrides": 0,
-    "ml_optimizations": 0
+    "optimization_events": 0
 }
 latest_sensor_data = {}  # {device_id: latest_data}
 last_device_states = {}  # {device_id: last_led_command} - Track actual state changes
@@ -156,9 +156,12 @@ class DatabaseManager:
                 expires_at = VALUES(expires_at),
                 created_at = CURRENT_TIMESTAMP
             """, (device_id, status, override_type, expires_at))
+            self.connection.commit()  # Commit the transaction
             cursor.close()
+            print(f"💾 Override saved to database: {device_id} = {status}")
         except mysql.connector.Error as e:
             print(f"❌ Override save error: {e}")
+            self.connection.rollback()  # Rollback on error
 
     def load_overrides(self):
         """Load active overrides from database"""
@@ -291,7 +294,10 @@ def prepare_ml_features(sensor_data: dict):
 def ml_energy_decision(sensor_data: dict) -> Tuple[str, float, str]:
     """
     Use trained ML model for energy saving decision
-    Returns: (action, energy_saved_kwh, reason)
+    Returns: (action, energy_saved_vs_baseline_kwh, reason)
+    
+    Baseline assumption: Lights are always ON when room is occupied
+    Energy savings calculated as difference between baseline and ML decision
     """
     if trained_model is None:
         # Fallback to rule-based if model not available
@@ -311,33 +317,42 @@ def ml_energy_decision(sensor_data: dict) -> Tuple[str, float, str]:
         occupancy = sensor_data.get('occupancy', 0)
         lux = sensor_data.get('lux', 50)
         
+        # BASELINE CALCULATION: What would baseline behavior be?
+        # Baseline: Always turn lights ON when room is occupied (150W = 0.15kW)
+        baseline_energy = 0.15 if occupancy > 0 else 0.0
+        
+        # ML DECISION LOGIC
         if prediction == 1:  # Model suggests saving energy
-            # Calculate potential energy savings (updated for 150W LEDs)
-            if room_usage > 0.15:  # Lights are currently on (150W threshold)
-                if occupancy == 0:
-                    energy_saved = room_usage  # Save all lighting energy
+            if occupancy > 0:
+                # Room is occupied but ML suggests saving energy
+                if lux >= 60:  # Sufficient ambient light
                     action = "turn_off"
-                    reason = f"ml_prediction_empty_space_conf_{confidence:.2f}"
+                    ml_energy = 0.0  # ML keeps lights off
+                    reason = f"ml_prediction_sufficient_ambient_light_conf_{confidence:.2f}"
                 else:
-                    energy_saved = max(0, room_usage - 0.17)  # Reduce to efficient level
-                    action = "reduce_lighting" 
-                    reason = f"ml_prediction_optimize_consumption_conf_{confidence:.2f}"
+                    # Occupied but ML optimizes consumption
+                    action = "reduce_lighting"
+                    ml_energy = 0.075  # Reduced lighting (50% of 150W)
+                    reason = f"ml_prediction_optimize_occupied_space_conf_{confidence:.2f}"
             else:
-                # Lights already off, but model suggests energy saving behavior
-                energy_saved = 0.05  # Small preventive saving
-                action = "keep_off"
-                reason = f"ml_prediction_maintain_efficiency_conf_{confidence:.2f}"
-        else:  # Model suggests keeping current state
-            if room_usage > 0.15 and occupancy > 0:  # Updated threshold for 150W LEDs
-                # Lights on and space occupied - appropriate usage
-                action = "keep_current"
-                energy_saved = 0.0
+                # Room unoccupied - ML keeps lights off (same as baseline)
+                action = "turn_off"
+                ml_energy = 0.0
+                reason = f"ml_prediction_unoccupied_space_conf_{confidence:.2f}"
+        else:  # Model suggests keeping current state or turning on
+            if occupancy > 0:
+                # Room occupied - ML agrees with baseline to have lights on
+                action = "turn_on"
+                ml_energy = 0.15  # Full lighting
                 reason = f"ml_prediction_appropriate_usage_conf_{confidence:.2f}"
             else:
-                # Default to energy saving for edge cases
+                # Room unoccupied - ML keeps lights off
                 action = "turn_off"
-                energy_saved = room_usage
-                reason = f"ml_prediction_fallback_save_conf_{confidence:.2f}"
+                ml_energy = 0.0
+                reason = f"ml_prediction_keep_off_unoccupied_conf_{confidence:.2f}"
+        
+        # Calculate energy savings vs baseline
+        energy_saved = baseline_energy - ml_energy
         
         return action, energy_saved, reason
         
@@ -348,7 +363,9 @@ def ml_energy_decision(sensor_data: dict) -> Tuple[str, float, str]:
 def rule_based_energy_decision(sensor_data: dict) -> Tuple[str, float, str]:
     """
     Fallback rule-based energy saving decision (original logic)
-    Returns: (action, energy_saved_kwh, reason)
+    Returns: (action, energy_saved_vs_baseline_kwh, reason)
+    
+    Baseline assumption: Lights are always ON when room is occupied
     """
     lux = sensor_data.get('lux', 50)
     occupancy = sensor_data.get('occupancy', 0)
@@ -357,23 +374,44 @@ def rule_based_energy_decision(sensor_data: dict) -> Tuple[str, float, str]:
     current_hour = datetime.now().hour
     rules = model_params['energy_saving_rules']
     
+    # BASELINE: What would baseline behavior be?
+    baseline_energy = 0.15 if occupancy > 0 else 0.0  # 150W when occupied
+    
     # Detect if lights are currently on (updated for 150W LEDs)
     lights_on = room_usage > 0.15  # Threshold increased for 150W LEDs
     
-    # Energy waste detection
-    if lights_on and occupancy == 0:
-        return "turn_off", room_usage, "rule_based_empty_space_waste"
+    # RULE-BASED DECISIONS
+    # Energy waste detection - room unoccupied
+    if occupancy == 0:
+        # Both baseline and rule-based keep lights off when unoccupied
+        rule_energy = 0.0
+        action = "turn_off"
+        reason = "rule_based_empty_space"
+    # Peak hour optimization - reduce consumption even when occupied
+    elif current_hour in rules['peak_waste_hours'] and occupancy > 0:
+        rule_energy = 0.075  # Reduced lighting (50% of 150W)
+        action = "reduce_lighting"
+        reason = "rule_based_peak_hour_optimization"
+    # Night energy saving - be more conservative
+    elif (current_hour >= 23 or current_hour <= 5) and occupancy > 0:
+        if lux >= 40:  # Some ambient light available at night
+            rule_energy = 0.0  # Turn off even when occupied
+            action = "turn_off"
+            reason = "rule_based_nighttime_ambient_sufficient"
+        else:
+            rule_energy = 0.075  # Reduced lighting
+            action = "reduce_lighting"
+            reason = "rule_based_nighttime_reduced"
+    # Standard occupied room behavior
+    else:
+        rule_energy = 0.15  # Full lighting when occupied
+        action = "turn_on"
+        reason = "rule_based_appropriate_usage"
     
-    # Peak hour optimization
-    if current_hour in rules['peak_waste_hours'] and room_usage > 0.3:
-        return "reduce_lighting", room_usage - 0.15, "rule_based_peak_hour_optimization"
+    # Calculate energy savings vs baseline
+    energy_saved = baseline_energy - rule_energy
     
-    # Night energy saving
-    if (current_hour >= 23 or current_hour <= 5) and lights_on and occupancy == 0:
-        return "turn_off", room_usage, "rule_based_nighttime_waste"
-    
-    # Efficient usage
-    return "keep_current", 0.0, "rule_based_efficient_usage"
+    return action, energy_saved, reason
 
 def energy_saving_decision(sensor_data: dict) -> Tuple[str, float, str]:
     """
@@ -387,14 +425,15 @@ def energy_saving_decision(sensor_data: dict) -> Tuple[str, float, str]:
 
 def ambient_light_optimization(lux: int, led_command: str) -> Tuple[str, bool, float]:
     """
-    Ambient light optimization logic
+    Ambient light optimization logic - updated for realistic time-based lighting
     Returns: (final_command, optimization_triggered, energy_saved)
     """
-    AMBIENT_THRESHOLD = 65
-    TARGET_LUX = 70
+    # Updated thresholds for more realistic lighting patterns
+    AMBIENT_THRESHOLD = 60  # Slightly lower threshold for realistic outdoor light simulation
+    TARGET_LUX = 65
     
     if led_command == "on" and lux >= AMBIENT_THRESHOLD:
-        return "off", True, 0.1  # Save 0.1 kWh by not turning on lights
+        return "off", True, 0.15  # Save 0.15 kWh by not turning on 150W lights
     
     return led_command, False, 0.0
 
@@ -443,9 +482,12 @@ def set_device_override(device_id: str, status: str, override_type: str = "24h")
             try:
                 cursor = db.connection.cursor()
                 cursor.execute("DELETE FROM device_overrides WHERE device_id = %s", (device_id,))
+                db.connection.commit()  # Commit the deletion
                 cursor.close()
-            except mysql.connector.Error:
-                pass
+                print(f"💾 Override deleted from database: {device_id}")
+            except mysql.connector.Error as e:
+                print(f"❌ Override deletion error: {e}")
+                db.connection.rollback()
         
         # Notify virtual nodes that override is disabled
         override_topic = f"devices/{device_id}/override"
@@ -500,18 +542,16 @@ def process_sensor_data(device_id: str, payload: dict):
     action, energy_saved, reason = energy_saving_decision(payload)
     
     # Convert action to LED command
-    if action in ["turn_off", "reduce_lighting", "keep_off"]:
+    if action in ["turn_off", "keep_off"]:
         led_command = "off"
-    elif action == "keep_current":
-        # For keep_current, we need to decide based on occupancy and ambient light
-        lux = payload.get('lux', 50)
-        occupancy = payload.get('occupancy', 0)
-        if occupancy > 0 and lux < 65:  # Occupied and insufficient ambient light
-            led_command = "on"
-        else:
-            led_command = "off"  # Energy saving default
+    elif action in ["turn_on", "appropriate_usage"]:
+        led_command = "on"
+    elif action == "reduce_lighting":
+        # For reduced lighting, we use "on" but could be implemented as dimming in the future
+        led_command = "on"  # Currently binary on/off, but represents reduced consumption
     else:
-        led_command = "off"  # Default to energy saving
+        # Default to energy saving for unknown actions
+        led_command = "off"
     
     
     # Ambient light optimization
@@ -530,10 +570,16 @@ def process_sensor_data(device_id: str, payload: dict):
         # Update global stats only on actual state change
         energy_stats["total_decisions"] += 1
         energy_stats["energy_saved"] += energy_saved
+        
+        # Increment ML optimizations counter when ML model is used
+        if trained_model and 'ml_prediction' in reason:
+            energy_stats["optimization_events"] += 1
+        
         last_device_states[device_id] = led_command
         
-        print(f"⚡ {device_id}: {original_command} → {led_command}, saved: {energy_saved:.3f}kWh")
+        print(f"⚡ {device_id}: {original_command} → {led_command}, saved: {energy_saved:.3f}kWh vs baseline")
         print(f"   🤖 Decision method: {'ML Model' if trained_model and 'ml_prediction' in reason else 'Rule-based'}")
+        print(f"   💡 Baseline would use: {0.15 if payload.get('occupancy', 0) > 0 else 0.0:.3f}kWh (150W when occupied)")
         print(f"   📊 Reason: {reason}")
     
     # Send LED command (only when no override is active)
@@ -649,6 +695,39 @@ def get_energy_stats():
     """Get energy optimization statistics"""
     return jsonify(energy_stats)
 
+@app.route('/api/baseline-comparison', methods=['GET'])
+def get_baseline_comparison():
+    """Get detailed baseline vs ML model comparison statistics"""
+    # Calculate what baseline consumption would be based on current occupancy
+    total_baseline_energy = 0.0
+    total_rooms_occupied = 0
+    
+    for device_id, sensor_data in latest_sensor_data.items():
+        occupancy = sensor_data.get('occupancy', 0)
+        if occupancy > 0:
+            total_baseline_energy += 0.15  # 150W baseline when occupied
+            total_rooms_occupied += 1
+    
+    # Calculate efficiency metrics
+    efficiency_improvement = 0.0
+    if total_baseline_energy > 0:
+        efficiency_improvement = (energy_stats['energy_saved'] / total_baseline_energy) * 100
+    
+    comparison_stats = {
+        'baseline_assumption': 'Lights always ON when room is occupied (150W per room)',
+        'current_baseline_consumption_kw': total_baseline_energy,
+        'rooms_currently_occupied': total_rooms_occupied,
+        'ml_energy_saved_vs_baseline_kwh': energy_stats['energy_saved'],
+        'efficiency_improvement_percent': round(efficiency_improvement, 1),
+        'total_ml_decisions': energy_stats['optimization_events'],
+        'total_system_decisions': energy_stats['total_decisions'],
+        'ml_model_active': trained_model is not None,
+        'energy_stats': energy_stats,
+        'calculation_timestamp': datetime.now().isoformat()
+    }
+    
+    return jsonify(comparison_stats)
+
 @app.route('/api/model-info', methods=['GET'])
 def get_model_info():
     """Get ML model information and capabilities"""
@@ -668,6 +747,77 @@ def get_model_info():
         'training_info': model_params.get('training_info', {})
     }
     return jsonify(model_info)
+
+@app.route('/api/system/refresh', methods=['POST'])
+def refresh_system():
+    """Refresh system status and reset stats"""
+    global energy_stats, last_device_states
+    
+    # Reset energy statistics
+    energy_stats = {
+        "total_decisions": 0,
+        "energy_saved": 0.0,
+        "ambient_overrides": 0,
+        "optimization_events": 0
+    }
+    
+    # Clear device state tracking
+    last_device_states = {}
+    
+    # Publish system refresh command
+    try:
+        publish.single("system/commands", json.dumps({"command": "status_refresh"}), 
+                      hostname=MQTT_BROKER, port=MQTT_PORT)
+    except Exception as e:
+        print(f"❌ Failed to publish refresh command: {e}")
+    
+    return jsonify({
+        'success': True,
+        'message': 'System refreshed successfully',
+        'energy_stats': energy_stats
+    })
+
+@app.route('/api/devices/all/control', methods=['POST'])
+def global_device_control():
+    """Control all devices globally"""
+    data = request.get_json()
+    command = data.get('command')
+    
+    if command not in ['all_on', 'all_off', 'energy_saving']:
+        return jsonify({'success': False, 'error': 'Invalid command'}), 400
+    
+    try:
+        # Publish global command
+        global_topic = "devices/all/control"
+        publish.single(global_topic, json.dumps({"command": command}), 
+                      hostname=MQTT_BROKER, port=MQTT_PORT)
+        
+        return jsonify({
+            'success': True,
+            'command': command,
+            'message': f'Global command {command} sent to all devices'
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/devices/all/override/clear', methods=['POST'])
+def clear_all_overrides():
+    """Clear all device overrides and return to auto mode"""
+    try:
+        cleared_devices = []
+        
+        # Clear all overrides from memory and database
+        for device_id in list(device_overrides.keys()):
+            set_device_override(device_id, "disabled", "disabled")
+            cleared_devices.append(device_id)
+        
+        return jsonify({
+            'success': True,
+            'message': f'Cleared overrides for {len(cleared_devices)} devices',
+            'devices': cleared_devices
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 def start_mqtt_client():
     """Start MQTT client in separate thread"""

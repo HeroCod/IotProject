@@ -15,6 +15,7 @@ import json
 import time
 import random
 import threading
+import math
 from datetime import datetime, timedelta
 import signal
 import sys
@@ -310,47 +311,347 @@ class VirtualIoTNode:
                 self.override_expires = None
                 print(f"⏰ {self.node_id} override expired, returning to AUTO mode")
     
-    def simulate_realistic_occupancy(self):
-        """Generate more stable and realistic occupancy patterns"""
-        # Simulate occupancy with stability (people don't constantly enter/exit)
+    def get_season(self):
+        """Determine current season based on month"""
+        month = datetime.now().month
+        if month in [12, 1, 2]:
+            return 'winter'
+        elif month in [3, 4, 5]:
+            return 'spring'
+        elif month in [6, 7, 8]:
+            return 'summer'
+        else:  # 9, 10, 11
+            return 'autumn'
+    
+    def calculate_realistic_temperature(self):
+        """Calculate realistic temperature based on time of day and season"""
+        now = datetime.now()
+        hour = now.hour
+        minute = now.minute
+        season = self.get_season()
+        
+        # Base temperatures by season
+        base_temps = {
+            'winter': {'min': 18, 'max': 22, 'outdoor_factor': 0.3},
+            'spring': {'min': 20, 'max': 24, 'outdoor_factor': 0.4},
+            'summer': {'min': 22, 'max': 26, 'outdoor_factor': 0.5},
+            'autumn': {'min': 19, 'max': 23, 'outdoor_factor': 0.4}
+        }
+        
+        temp_config = base_temps[season]
+        
+        # Daily temperature curve (sine wave with peak at 14:00, minimum at 4:00)
+        time_decimal = hour + minute / 60.0
+        # Shift sine wave so peak is at 14:00 and minimum at 4:00
+        daily_cycle = math.sin((time_decimal - 4) * math.pi / 12)
+        
+        # Room-specific adjustments
+        room_adjustments = {
+            'Living Room': 0.5,  # Slightly warmer (people, electronics)
+            'Kitchen': 1.0,      # Warmer (cooking, appliances)
+            'Bedroom': -0.5      # Slightly cooler (better sleep)
+        }
+        
+        room_adj = room_adjustments.get(self.location, 0)
+        
+        # Calculate temperature
+        base_temp = (temp_config['min'] + temp_config['max']) / 2
+        temp_range = (temp_config['max'] - temp_config['min']) / 2
+        
+        # Apply daily cycle, seasonal variation, and room adjustment
+        temperature = base_temp + (daily_cycle * temp_range * temp_config['outdoor_factor']) + room_adj
+        
+        # Add small random variation (±0.5°C)
+        temperature += random.uniform(-0.5, 0.5)
+        
+        # Occupancy effect (people generate heat)
+        if hasattr(self, 'current_occupancy') and self.current_occupancy:
+            temperature += random.uniform(0.2, 0.8)  # People add warmth
+        
+        return round(temperature, 1)
+    
+    def calculate_realistic_light(self):
+        """Calculate realistic light levels based on time of day and season"""
+        now = datetime.now()
+        hour = now.hour
+        minute = now.minute
+        season = self.get_season()
+        
+        # Daylight hours by season (sunrise/sunset times)
+        daylight_hours = {
+            'winter': {'sunrise': 7.5, 'sunset': 16.5},    # 7:30 AM - 4:30 PM
+            'spring': {'sunrise': 6.5, 'sunset': 18.5},    # 6:30 AM - 6:30 PM
+            'summer': {'sunrise': 5.5, 'sunset': 20.0},    # 5:30 AM - 8:00 PM
+            'autumn': {'sunrise': 7.0, 'sunset': 17.5}     # 7:00 AM - 5:30 PM
+        }
+        
+        daylight = daylight_hours[season]
+        time_decimal = hour + minute / 60.0
+        
+        # Calculate light level based on time
+        if daylight['sunrise'] <= time_decimal <= daylight['sunset']:
+            # Daylight hours - calculate sun position
+            day_length = daylight['sunset'] - daylight['sunrise']
+            time_since_sunrise = time_decimal - daylight['sunrise']
+            sun_position = math.sin((time_since_sunrise / day_length) * math.pi)
+            
+            # Base light levels by season (cloudy/clear day variation)
+            season_max_light = {
+                'winter': 60,
+                'spring': 85,
+                'summer': 95,
+                'autumn': 75
+            }
+            
+            max_light = season_max_light[season]
+            outdoor_light = max_light * sun_position
+            
+        else:
+            # Night time - very low light
+            outdoor_light = random.uniform(2, 8)
+        
+        # Room-specific light adjustments based on windows and orientation
+        room_light_factors = {
+            'Living Room': 0.8,  # Good windows, but some obstruction
+            'Kitchen': 0.65,      # Some windows, but cabinets block light
+            'Bedroom': 0.55       # Curtains, smaller windows
+        }
+        
+        room_factor = room_light_factors.get(self.location, 0.7)
+        indoor_natural_light = outdoor_light * room_factor
+        
+        # Add artificial lighting contribution
+        artificial_light = 0
+        if self.led_status:
+            # LED adds significant light when on
+            artificial_light = random.uniform(40, 60)
+            # LED effect is stronger in darker conditions
+            if indoor_natural_light < 20:
+                artificial_light += random.uniform(10, 20)
+        
+        # Other artificial sources (TV, appliances, etc.)
+        if hasattr(self, 'current_occupancy') and self.current_occupancy:
+            artificial_light += random.uniform(1, 3)  # People add minor light sources with phones, etc
+        
+        total_light = indoor_natural_light + artificial_light
+        
+        # Add small random variation
+        total_light += random.uniform(-3, 3)
+        
+        # Ensure within reasonable bounds
+        return max(5, min(int(total_light), 120))
+    
+    def simulate_volumetric_occupancy(self):
+        """Simulate occupancy as if detected by a volumetric sensor with realistic patterns"""
+        now = datetime.now()
+        hour = now.hour
+        minute = now.minute
+        day_of_week = now.weekday()  # 0 = Monday, 6 = Sunday
+        
+        # If in stability period, return last occupancy
         if self.occupancy_stability > 0:
             self.occupancy_stability -= 1
             return self.last_occupancy
         
-        # Generate new occupancy with time-based patterns
-        hour = datetime.now().hour
+        # Define realistic occupancy patterns by room and time
+        occupancy_patterns = {
+            'Living Room': {
+                'weekday': {
+                    6: 0.2,   # 6 AM - getting ready
+                    7: 0.4,   # 7 AM - morning routine
+                    8: 0.6,   # 8 AM - breakfast/preparation
+                    9: 0.2,   # 9 AM - leaving for work
+                    10: 0.1,  # 10 AM - empty
+                    11: 0.1,  # 11 AM - empty
+                    12: 0.2,  # 12 PM - maybe lunch break
+                    13: 0.1,  # 1 PM - back to work
+                    14: 0.1,  # 2 PM - empty
+                    15: 0.1,  # 3 PM - empty
+                    16: 0.2,  # 4 PM - early return possible
+                    17: 0.4,  # 5 PM - coming home
+                    18: 0.7,  # 6 PM - dinner time
+                    19: 0.8,  # 7 PM - evening activities
+                    20: 0.9,  # 8 PM - TV time
+                    21: 0.8,  # 9 PM - relaxing
+                    22: 0.6,  # 10 PM - winding down
+                    23: 0.3,  # 11 PM - going to bed
+                    0: 0.1,   # 12 AM - night
+                    1: 0.05,  # 1 AM - sleeping
+                    2: 0.05,  # 2 AM - sleeping
+                    3: 0.05,  # 3 AM - sleeping
+                    4: 0.05,  # 4 AM - sleeping
+                    5: 0.1    # 5 AM - early morning
+                },
+                'weekend': {
+                    6: 0.05,  # 6 AM - sleeping in
+                    7: 0.1,   # 7 AM - some early risers
+                    8: 0.3,   # 8 AM - getting up
+                    9: 0.5,   # 9 AM - breakfast
+                    10: 0.6,  # 10 AM - morning activities
+                    11: 0.7,  # 11 AM - active time
+                    12: 0.8,  # 12 PM - lunch
+                    13: 0.7,  # 1 PM - afternoon
+                    14: 0.8,  # 2 PM - peak weekend activity
+                    15: 0.7,  # 3 PM - activities
+                    16: 0.6,  # 4 PM - late afternoon
+                    17: 0.7,  # 5 PM - evening prep
+                    18: 0.8,  # 6 PM - dinner
+                    19: 0.9,  # 7 PM - peak evening
+                    20: 0.9,  # 8 PM - entertainment
+                    21: 0.8,  # 9 PM - evening wind down
+                    22: 0.6,  # 10 PM - late evening
+                    23: 0.4,  # 11 PM - bedtime
+                    0: 0.2,   # 12 AM - late night
+                    1: 0.1,   # 1 AM - night
+                    2: 0.05,  # 2 AM - sleeping
+                    3: 0.05,  # 3 AM - sleeping
+                    4: 0.05,  # 4 AM - sleeping
+                    5: 0.05   # 5 AM - sleeping
+                }
+            },
+            'Kitchen': {
+                'weekday': {
+                    6: 0.3,   # 6 AM - morning prep
+                    7: 0.8,   # 7 AM - breakfast
+                    8: 0.6,   # 8 AM - finishing breakfast
+                    9: 0.2,   # 9 AM - cleanup
+                    10: 0.1,  # 10 AM - empty
+                    11: 0.1,  # 11 AM - empty
+                    12: 0.6,  # 12 PM - lunch prep
+                    13: 0.4,  # 1 PM - lunch cleanup
+                    14: 0.1,  # 2 PM - empty
+                    15: 0.1,  # 3 PM - empty
+                    16: 0.2,  # 4 PM - snack time
+                    17: 0.3,  # 5 PM - dinner prep starts
+                    18: 0.9,  # 6 PM - peak dinner prep
+                    19: 0.7,  # 7 PM - cooking/eating
+                    20: 0.4,  # 8 PM - cleanup
+                    21: 0.2,  # 9 PM - occasional use
+                    22: 0.1,  # 10 PM - late snack
+                    23: 0.05, # 11 PM - rare use
+                    0: 0.05,  # 12 AM - very rare
+                    1: 0.02,  # 1 AM - almost never
+                    2: 0.02,  # 2 AM - almost never
+                    3: 0.02,  # 3 AM - almost never
+                    4: 0.02,  # 4 AM - almost never
+                    5: 0.05   # 5 AM - early morning
+                },
+                'weekend': {
+                    6: 0.05,  # 6 AM - sleeping
+                    7: 0.2,   # 7 AM - some early breakfast
+                    8: 0.4,   # 8 AM - morning coffee
+                    9: 0.7,   # 9 AM - breakfast
+                    10: 0.8,  # 10 AM - late breakfast/brunch
+                    11: 0.6,  # 11 AM - brunch cleanup
+                    12: 0.4,  # 12 PM - light lunch
+                    13: 0.3,  # 1 PM - cleanup
+                    14: 0.2,  # 2 PM - snacks
+                    15: 0.2,  # 3 PM - afternoon snacks
+                    16: 0.3,  # 4 PM - prep for dinner
+                    17: 0.4,  # 5 PM - dinner prep
+                    18: 0.8,  # 6 PM - dinner cooking
+                    19: 0.7,  # 7 PM - eating
+                    20: 0.5,  # 8 PM - cleanup
+                    21: 0.3,  # 9 PM - evening snacks
+                    22: 0.2,  # 10 PM - late snacks
+                    23: 0.1,  # 11 PM - rare use
+                    0: 0.05,  # 12 AM - very rare
+                    1: 0.02,  # 1 AM - almost never
+                    2: 0.02,  # 2 AM - almost never
+                    3: 0.02,  # 3 AM - almost never
+                    4: 0.02,  # 4 AM - almost never
+                    5: 0.05   # 5 AM - very early
+                }
+            },
+            'Bedroom': {
+                'weekday': {
+                    6: 0.8,   # 6 AM - waking up
+                    7: 0.6,   # 7 AM - getting ready
+                    8: 0.3,   # 8 AM - leaving
+                    9: 0.1,   # 9 AM - empty
+                    10: 0.05, # 10 AM - empty
+                    11: 0.05, # 11 AM - empty
+                    12: 0.1,  # 12 PM - maybe quick visit
+                    13: 0.05, # 1 PM - empty
+                    14: 0.05, # 2 PM - empty
+                    15: 0.05, # 3 PM - empty
+                    16: 0.1,  # 4 PM - early return possible
+                    17: 0.2,  # 5 PM - changing clothes
+                    18: 0.2,  # 6 PM - brief visits
+                    19: 0.1,  # 7 PM - brief visits
+                    20: 0.2,  # 8 PM - brief visits
+                    21: 0.4,  # 9 PM - preparing for bed
+                    22: 0.7,  # 10 PM - bedtime routine
+                    23: 0.9,  # 11 PM - going to bed
+                    0: 0.95,  # 12 AM - sleeping
+                    1: 0.98,  # 1 AM - sleeping
+                    2: 0.98,  # 2 AM - sleeping
+                    3: 0.98,  # 3 AM - sleeping
+                    4: 0.95,  # 4 AM - deep sleep
+                    5: 0.8    # 5 AM - light sleep
+                },
+                'weekend': {
+                    6: 0.9,   # 6 AM - sleeping in
+                    7: 0.8,   # 7 AM - sleeping in
+                    8: 0.6,   # 8 AM - some wake up
+                    9: 0.4,   # 9 AM - getting up
+                    10: 0.2,  # 10 AM - up and about
+                    11: 0.1,  # 11 AM - empty
+                    12: 0.2,  # 12 PM - brief visit
+                    13: 0.1,  # 1 PM - empty
+                    14: 0.3,  # 2 PM - afternoon nap possible
+                    15: 0.2,  # 3 PM - changing clothes
+                    16: 0.1,  # 4 PM - brief visits
+                    17: 0.2,  # 5 PM - changing clothes
+                    18: 0.1,  # 6 PM - brief visits
+                    19: 0.1,  # 7 PM - brief visits
+                    20: 0.2,  # 8 PM - brief visits
+                    21: 0.3,  # 9 PM - earlier bedtime prep
+                    22: 0.6,  # 10 PM - bedtime routine
+                    23: 0.8,  # 11 PM - going to bed
+                    0: 0.9,   # 12 AM - sleeping
+                    1: 0.95,  # 1 AM - sleeping
+                    2: 0.98,  # 2 AM - sleeping
+                    3: 0.98,  # 3 AM - sleeping
+                    4: 0.95,  # 4 AM - sleeping
+                    5: 0.9    # 5 AM - sleeping
+                }
+            }
+        }
         
-        # Different patterns for different rooms and times
-        if self.location == 'Living Room':
-            if 7 <= hour <= 10 or 18 <= hour <= 23:  # Morning and evening
-                occupancy_prob = 0.8
-            elif 11 <= hour <= 17:  # Afternoon
-                occupancy_prob = 0.4
-            else:  # Night
-                occupancy_prob = 0.1
-        elif self.location == 'Kitchen':
-            if 7 <= hour <= 9 or 12 <= hour <= 13 or 18 <= hour <= 20:  # Meal times
-                occupancy_prob = 0.9
-            elif 10 <= hour <= 11 or 14 <= hour <= 17:  # Light activity
-                occupancy_prob = 0.3
-            else:
-                occupancy_prob = 0.1
-        elif self.location == 'Bedroom':
-            if 6 <= hour <= 8 or 22 <= hour <= 23:  # Wake up and bedtime
-                occupancy_prob = 0.9
-            elif 9 <= hour <= 21:  # Day
-                occupancy_prob = 0.2
-            else:  # Night sleep
-                occupancy_prob = 0.95
-        else:
-            occupancy_prob = self.occupancy_rate
+        # Determine if weekday or weekend
+        is_weekend = day_of_week >= 5  # Saturday = 5, Sunday = 6
+        schedule_type = 'weekend' if is_weekend else 'weekday'
         
+        # Get occupancy probability for current room and time
+        room_schedule = occupancy_patterns.get(self.location, occupancy_patterns['Living Room'])
+        schedule = room_schedule[schedule_type]
+        
+        # Get base probability for current hour
+        base_prob = schedule.get(hour, 0.1)
+        
+        # Add minute-based variation (small adjustments within the hour)
+        minute_variation = math.sin((minute / 60) * 2 * math.pi) * 0.1
+        occupancy_prob = max(0, min(1, base_prob + minute_variation))
+        
+        # Generate occupancy decision
         new_occupancy = 1 if random.random() < occupancy_prob else 0
         
-        # If occupancy changes, set stability period
+        # If occupancy changes, set stability period (people don't constantly move)
         if new_occupancy != self.last_occupancy:
-            self.occupancy_stability = random.randint(15, 45)  # Stay stable for 1.5-4 minutes
-            print(f"👤 {self.node_id} occupancy changed: {self.last_occupancy} -> {new_occupancy}")
+            # Different stability periods based on transition type and room
+            if new_occupancy == 1:  # Entering room
+                stability_min = 10 if self.location == 'Kitchen' else 20  # Kitchen visits can be shorter
+                stability_max = 60 if self.location == 'Bedroom' else 40
+            else:  # Leaving room
+                stability_min = 30  # Once you leave, stay away for a while
+                stability_max = 120
+                
+            self.occupancy_stability = random.randint(stability_min, stability_max)
+            
+            # Log significant changes
+            transition = "entered" if new_occupancy else "left"
+            print(f"👤 {self.node_id} ({self.location}): Person {transition} room (stability: {self.occupancy_stability}s)")
         
         self.last_occupancy = new_occupancy
         return new_occupancy
@@ -418,13 +719,14 @@ class VirtualIoTNode:
         # Check override expiry
         self.check_override_expiry()
         
-        # Generate base sensor values with more realistic patterns
-        lux = random.randint(self.lux_range[0], self.lux_range[1])
+        # Generate realistic sensor values based on time and environment
+        # Use volumetric sensor simulation for occupancy
+        occupancy = self.simulate_volumetric_occupancy()
+        self.current_occupancy = occupancy  # Store for other calculations
         
-        # Use realistic occupancy simulation
-        occupancy = self.simulate_realistic_occupancy()
-        
-        temperature = round(random.uniform(18, 26), 1)
+        # Calculate realistic temperature and light based on time/season
+        temperature = self.calculate_realistic_temperature()
+        lux = self.calculate_realistic_light()
         
         # Simulate auto behavior if not in manual override
         self.simulate_auto_behavior(occupancy, lux)

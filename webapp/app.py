@@ -82,8 +82,15 @@ def control():
 
 @app.route('/analytics')
 def analytics():
-    """Energy analytics page"""
+    """Analytics page route"""
     return render_template('analytics.html')
+
+@app.route('/optimizer')
+def optimizer():
+    """ML Optimizer information page route"""
+    return render_template('optimizer.html')
+
+# API Routes
 
 # API Proxy Endpoints - Forward requests to controller
 
@@ -203,6 +210,30 @@ def api_remove_override(device_id):
     })
     
     return jsonify(result)
+
+@app.route('/api/system/refresh', methods=['POST'])
+def refresh_system():
+    """Refresh system via controller API"""
+    result = call_controller_api('system/refresh', 'POST')
+    return jsonify(result)
+
+@app.route('/api/devices/all/control', methods=['POST'])
+def global_device_control():
+    """Global device control via controller API"""
+    data = request.get_json()
+    result = call_controller_api('devices/all/control', 'POST', data)
+    return jsonify(result)
+
+@app.route('/api/devices/all/override/clear', methods=['POST'])
+def clear_all_overrides():
+    """Clear all device overrides via controller API"""
+    result = call_controller_api('devices/all/override/clear', 'POST')
+    return jsonify(result)
+
+@app.route('/api/model-info')
+def get_model_info():
+    """Get ML model information via controller API"""
+    return jsonify(call_controller_api('model-info'))
 
 # WebSocket Events for Real-time Updates
 

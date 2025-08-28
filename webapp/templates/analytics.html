@@ -185,6 +185,95 @@
             position: relative;
             height: 250px;
         }
+        
+        /* Mobile Responsive Design */
+        @media (max-width: 768px) {
+            .container {
+                padding: 10px;
+            }
+            
+            .header {
+                padding: 15px;
+                margin-bottom: 15px;
+            }
+            
+            .header h1 {
+                font-size: 1.8em;
+                margin-bottom: 8px;
+            }
+            
+            .header p {
+                font-size: 14px;
+            }
+            
+            .chart-grid {
+                grid-template-columns: 1fr;
+                gap: 15px;
+            }
+            
+            .card {
+                padding: 15px;
+                margin-bottom: 15px;
+            }
+            
+            .chart-container {
+                height: 200px;
+            }
+            
+            .insights-grid {
+                grid-template-columns: 1fr;
+                gap: 10px;
+            }
+            
+            .insight-item {
+                padding: 12px;
+                flex-direction: column;
+                text-align: center;
+                gap: 8px;
+            }
+            
+            .insight-icon {
+                font-size: 20px;
+                width: auto;
+            }
+            
+            .insight-title {
+                font-size: 14px;
+            }
+            
+            .insight-description {
+                font-size: 12px;
+            }
+            
+            .nav-links {
+                flex-direction: column;
+                gap: 10px;
+            }
+            
+            .nav-link {
+                width: 100%;
+                text-align: center;
+                max-width: 200px;
+            }
+        }
+        
+        @media (max-width: 480px) {
+            .header h1 {
+                font-size: 1.5em;
+            }
+            
+            .card {
+                padding: 12px;
+            }
+            
+            .chart-container {
+                height: 180px;
+            }
+            
+            .insight-item {
+                padding: 10px;
+            }
+        }
     </style>
 </head>
 <body>
@@ -195,7 +284,6 @@
             
             <div class="nav-links">
                 <a href="/" class="nav-link">📊 Dashboard</a>
-                <a href="/control" class="nav-link">🎮 Control</a>
                 <a href="/analytics" class="nav-link">📈 Analytics</a>
             </div>
         </div>
