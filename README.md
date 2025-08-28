@@ -1,83 +1,112 @@
-# IoT Project: Smart Home Energy Management System
+# IoT Energy Management System
 
-This project demonstrates a **Smart Home Energy Management IoT** system for the IoT course project (solo setup).  
+## Cloud-ready Smart Home Energy Management IoT System
 
-**Use Case Domain**: Smart Homes and Buildings - enabling real-time control and energy efficiency in residential environments.
+> Modern microservices architecture with REST API communication, 24h override system, and ML-powered energy optimization.
 
-Components:
+---
 
-- **3 IoT Nodes** (simulated in Cooja with Contiki-NG) → publish light sensor, occupancy, and temperature data; control LEDs autonomously.
-- **MQTT Broker** (Mosquitto in Docker).
-- **Collector App** (Python container) → stores sensor data in MySQL and applies trained ML model for autonomous LED control.
-- **CLI App** (Python container) → lets user override actuator state or query recent sensor data.
-- **Machine Learning Model** → trained Random Forest classifier for energy-efficient lighting decisions.
+## 🏗️ Architecture Overview
+
+This is a **distributed IoT system** designed for cloud deployment with clean service separation:
+
+- **Controller Backend** (REST API on port 5001) → handles MQTT processing, ML decisions, database management
+- **Web Frontend** (port 5000) → user interface communicating with controller via REST API
+- **24h Override System** → temporary/permanent/disabled device control modes
+- **MQTT Processing** → real-time sensor data from IoT nodes
+- **ML Energy Optimization** → intelligent lighting decisions based on occupancy/ambient light
+
+**Key Features:**
+
+- 🌐 **Cloud-ready architecture** with REST API communication
+- 🔧 **24h override system** with auto-expiry, permanent, and disabled modes  
+- 🤖 **ML-powered energy optimization** for autonomous device control
+- 🐳 **Docker containerization** with service isolation
+- 📊 **Real-time monitoring** with WebSocket updates
+- 🎛️ **Web dashboard** for device control and analytics
 
 ---
 
 ## 📂 Project Structure
 
 ```markdown
-iot-project/
+IoT-Project/
 │
-├── docker-compose.yml
-├── run.sh
-├── README.md
+├── run.sh                    # 🚀 MAIN ENTRY POINT - unified management script
+├── docker-compose.yml        # Container orchestration
+├── README.md                # This documentation
 │
-├── config/
-│   ├── devices.json
-│   └── mosquitto.conf
+├── controller/              # 🎛️ Backend REST API service
+│   ├── controller.py        # Main Flask API + MQTT processing
+│   ├── Dockerfile          # Controller container
+│   └── requirements.txt    # Python dependencies
 │
-├── collector/
-│   ├── Dockerfile
-│   ├── requirements.txt
-│   ├── collector.py
-│   └── entrypoint.sh
+├── webapp/                  # 🌐 Frontend web application
+│   ├── app.py              # Flask web UI (REST API client)
+│   ├── Dockerfile          # Webapp container  
+│   ├── requirements.txt    # Web app dependencies
+│   └── static/             # CSS, JS, images
+│       └── templates/       # HTML templates
 │
-├── cli/
-│   ├── Dockerfile
-│   ├── requirements.txt
-│   └── control.py
+├── config/                  # 📋 Configuration files
+│   ├── devices.json        # Device definitions
+│   └── mosquitto.conf      # MQTT broker config
 │
-├── contiki_nodes/
-│   ├── Makefile
-│   ├── node1.c
-│   ├── node2.c
-│   ├── node3.c
-│   └── README.md
+├── contiki_nodes/          # 🎭 IoT node firmware (Contiki-NG)
+│   ├── node1.c, node2.c, node3.c
+│   └── project-conf.h      # Node configuration
 │
-└── ml/
-    ├── train_model.ipynb
-    └── model_params.json
+├── ml/                     # 🤖 Machine learning pipeline
+│   ├── train_model.ipynb   # Complete ML training notebook
+│   └── train_params.json   # Trained model parameters
+│
+└── cli/                    # 🖥️ Command line interface (legacy)
+    ├── control.py          # CLI commands
+    └── requirements.txt    # CLI dependencies
 ```
 
 ---
 
-## 🛠 1. Prerequisites
+## 🚀 Quick Start Guide
 
-- **Docker & Docker Compose**
-- **Java JDK + ant** (to run Cooja simulator)
-- **Contiki-NG** installed locally: [https://github.com/contiki-ng/contiki-ng](https://github.com/contiki-ng/contiki-ng)
-- **Python 3.10+** (if running CLI outside Docker)
-
----
-
-## 🚀 2. Quick Start with `run.sh`
-
-All commands are wrapped inside **one script** for consistency.
-
-### Build everything
+### 1. Initialize System
 
 ```bash
-./run.sh build
+# First time setup - installs all dependencies
+./run.sh init
+
+# Log out and back in for Docker permissions
+logout && login
 ```
 
-### Start backend (MQTT + MySQL + Collector)
+### 2. Start Complete System
 
 ```bash
-./run.sh backend
+# Start everything: services + simulated IoT nodes
+./run.sh start
+
+# 🌍 Access the system:
+# Web Dashboard:    http://localhost:5000
+# Device Control:   http://localhost:5000/control  
+# Analytics:        http://localhost:5000/analytics
+# Controller API:   http://localhost:5001/api/status
 ```
 
-### Stop backend
+### 3. Monitor System
+
+```bash
+# Check system status
+./run.sh status
+
+# View live logs
+./run.sh logs
+
+# View specific service logs
+./run.sh logs controller
+./run.sh logs webapp
+```
+
+### 4. Stop System
 
 ```bash
 ./run.sh stop
@@ -85,121 +114,267 @@ All commands are wrapped inside **one script** for consistency.
 
 ---
 
-## 🎛 3. Simulate IoT Nodes (Cooja)
+## 🎮 Simulation Mode (Cooja)
 
-1. Build simulated firmwares:
+For **hardware-in-the-loop testing** with Contiki-NG nodes:
 
-    ```bash
-    ./run.sh sim
-    ```
+```bash
+# Start with Cooja simulation environment
+./run.sh sim
 
-    This compiles `node1.node`, `node2.node`, `node3.node` and launches Cooja.
+# This will:
+# 1. Build Contiki-NG firmware for nodes
+# 2. Start backend services (MQTT, MySQL, Controller)
+# 3. Launch Cooja simulator
+# 4. Start web interface
 
-2. In Cooja:
-   - Add a border router node. Broker IP should match Docker’s Mosquitto (`localhost` mapped).
-   - Add Node1, Node2, Node3.
-   - Nodes publish random light sensor values to MQTT topics:
-     - `sensors/node1/light`
-     - `sensors/node2/light`
-     - `sensors/node3/light`
-   - Nodes subscribe to their actuator topics:
-     - `actuators/node1/led`, etc.
-   - Simulated “green LED” on node toggles according to commands.
-
-3. Collector container logs show:
-
-    ```markdown
-    [DB] Inserted from node1: {...}
-    [ML] Predicted LED=on ...
-    ```
+# In Cooja:
+# 1. Create new simulation
+# 2. Add border router (IPv6: fd00::1)
+# 3. Add 3 nodes using compiled .cooja files
+# 4. Start simulation
+# 5. Monitor web dashboard: http://localhost:5000
+```
 
 ---
 
-## 💡 4. Using the CLI
+## 🌐 REST API Reference
 
-Use CLI commands via `run.sh`:
+The **Controller** exposes a comprehensive REST API for cloud integration:
 
-- Show most recent DB data:
+### Device Management
 
 ```bash
+# Get all devices and their status
+GET http://localhost:5001/api/devices
+
+# Get recent sensor data  
+GET http://localhost:5001/api/sensor-data
+
+# System health check
+GET http://localhost:5001/api/status
+```
+
+### Override System (24h Auto-Expiry)
+
+```bash
+# Set 24h override (auto-expires after 24 hours)
+POST http://localhost:5001/api/devices/node1/override
+{
+  "status": "on",
+  "type": "24h"
+}
+
+# Set permanent override (never expires)
+POST http://localhost:5001/api/devices/node1/override  
+{
+  "status": "off",
+  "type": "permanent"
+}
+
+# Disable override (return to ML control)
+POST http://localhost:5001/api/devices/node1/override
+{
+  "status": "off", 
+  "type": "disabled"
+}
+
+# Remove override completely
+DELETE http://localhost:5001/api/devices/node1/override
+```
+
+---
+
+## 🖥️ Command Line Interface
+
+Use the CLI for quick operations:
+
+```bash
+# Show recent sensor data
 ./run.sh cli show
-```
 
-- Control actuators manually:
+# Show device status
+./run.sh cli devices
 
-```bash
-./run.sh cli set node1 on
-./run.sh cli set node2 off
+# Set device override
+./run.sh cli override node1 on 24h
+./run.sh cli override node2 off permanent  
+./run.sh cli override node3 off disabled
 ```
 
 ---
 
-## 🌐 5. ML Pipeline
+## 🤖 Machine Learning Pipeline
 
-- **Training Notebook**: Complete ML model training in `/ml/train_model.ipynb`
-- **Dataset**: Smart Home Energy Management dataset (Kaggle-style) with 10,000 samples
-- **Algorithm**: Random Forest Classifier with 95.23% accuracy
-- **Features**: Light level, occupancy, time of day, temperature, humidity
-- **Deployment**: Lightweight rule-based function optimized for IoT devices
-- **Energy Focus**: Autonomous LED control for energy efficiency in smart homes
+**Intelligent Energy Management** with trained Random Forest model:
 
-The collector loads trained model parameters from `/ml/train_params.json` and makes intelligent lighting decisions:
+- **Dataset**: Smart Home Energy Management (10,000 samples)
+- **Algorithm**: Random Forest Classifier (95.23% accuracy)
+- **Features**: Light level, occupancy, time of day, temperature, room usage
+- **Optimization**: Energy-efficient lighting with user comfort
+- **Deployment**: Lightweight inference in controller service
 
-- LED only turns ON when room is occupied (energy efficiency)
-- Considers ambient light levels and time of day
-- Balances user comfort with energy savings
+**Energy Optimization Logic:**
+
+- ✅ LED ON: Room occupied + low ambient light + energy budget available
+- ❌ LED OFF: Room empty OR high ambient light OR energy budget exceeded
+- 🕐 **24h Override System**: Temporary manual control with auto-expiry
+
+The ML model runs continuously in the controller, making decisions every 5 seconds based on real-time sensor data.
 
 ---
 
-## 🧪 6. Running End-to-End Demo
+## 🐳 Docker Architecture
 
-**Simulation Route:**
+**Service Separation** for cloud deployment:
 
-```bash
-./run.sh backend    # start Docker infra
-./run.sh sim        # build + launch Cooja
-./run.sh cli show   # check DB contents
-./run.sh cli set node1 on  # manual control
+```yaml
+services:
+  controller:    # Backend REST API + MQTT processing + ML
+    ports: ["5001:5001"]
+    networks: [iot-network]
+    
+  webapp:        # Frontend web UI (REST API client)  
+    ports: ["5000:5000"]
+    networks: [iot-network]
+    depends_on: [controller]
+    
+  mosquitto:     # MQTT broker
+    ports: ["1883:1883"]
+    
+  mysql:         # Database
+    ports: ["3306:3306"]
 ```
 
-**Real Hardware Route (nRF52840):**
+**Benefits:**
+
+- 🌐 **Cloud-ready**: Web app can be deployed remotely, communicates via REST API
+- 🔄 **Scalable**: Controller can handle multiple web app instances
+- 🛡️ **Secure**: Network isolation between services
+- 📊 **Observable**: Separate logging and monitoring per service
+
+---
+
+## 🔧 Development & Testing
+
+### Build Containers
 
 ```bash
-./run.sh backend
-./run.sh flash   # build binaries for 3 nodes
-# Then flash using nrfjprog/openocd:
+./run.sh build
+```
+
+### Development Mode
+
+```bash
+# Start only backend services
+docker compose up -d mosquitto mysql controller
+
+# Run webapp locally for development
+cd webapp
+python app.py
+```
+
+### Testing Commands
+
+```bash
+# Test controller API
+curl http://localhost:5001/api/status
+
+# Test device override
+curl -X POST http://localhost:5001/api/devices/node1/override \
+     -H "Content-Type: application/json" \
+     -d '{"status":"on","type":"24h"}'
+
+# Test sensor data endpoint
+curl http://localhost:5001/api/sensor-data | jq '.'
+```
+
+### Hardware Deployment (nRF52840)
+
+```bash
+# Build firmware for Nordic boards
+cd contiki_nodes
+make node1 TARGET=nrf52840dk
+make node2 TARGET=nrf52840dk  
+make node3 TARGET=nrf52840dk
+
+# Flash with nrfjprog
 nrfjprog --program node1.hex --chiperase --reset
 ```
 
-After flashing, connect dongles → nodes behave like simulated ones, publishing lux values and listening for LED actuation via MQTT.
+---
+
+## 📋 System Status & Monitoring
+
+**Real-time Monitoring:**
+
+- 📊 **Web Dashboard**: Device status, sensor readings, energy analytics
+- 🔍 **System Logs**: `./run.sh logs` for debugging
+- 💡 **Device Control**: Override system with 24h auto-expiry
+- 📈 **Analytics**: Energy consumption trends and ML decision history
+
+**Health Checks:**
+
+- Controller API: `http://localhost:5001/api/status`
+- Web App: `http://localhost:5000/api/status`  
+- MQTT Broker: Port 1883 connectivity
+- Database: MySQL on port 3306
 
 ---
 
-## 🛠 7. Compile for Hardware (detailed)
+## 🎯 Use Cases
 
-To compile firmware for the **nRF52840 boards**:
+1. **Smart Home Energy Management**
+   - Automatic lighting control based on occupancy
+   - Energy optimization with user comfort
+   - 24h manual override for special events
+
+2. **Cloud IoT Platform**
+   - REST API for remote device management
+   - Scalable microservices architecture
+   - Real-time monitoring and analytics
+
+3. **Research & Development**
+   - ML model training and evaluation
+   - IoT protocol testing with Contiki-NG
+   - Edge computing optimization
+
+---
+
+## 🚀 Next Steps
+
+1. **Start the system**: `./run.sh start`
+2. **Open web dashboard**: <http://localhost:5000>
+3. **Monitor device control**: <http://localhost:5000/control>
+4. **View analytics**: <http://localhost:5000/analytics>
+5. **Test CLI**: `./run.sh cli devices`
+
+---
+
+## 📝 Quick Reference
 
 ```bash
-cd contiki_nodes
-make node1 TARGET=nrf52840dk
-make node2 TARGET=nrf52840dk
-make node3 TARGET=nrf52840dk
-```
+# Essential Commands
+./run.sh init     # First-time setup
+./run.sh start    # Start complete system  
+./run.sh stop     # Stop all services
+./run.sh status   # Check system health
+./run.sh logs     # View system logs
 
-To flash (example with `nrfjprog`):
+# Simulation & Development  
+./run.sh sim      # Cooja simulation mode
+./run.sh build    # Build containers
+./run.sh cli      # Command line interface
 
-```bash
-nrfjprog --program node1.hex --reset
+# Web Access Points
+http://localhost:5000           # Main dashboard
+http://localhost:5000/control   # Device control
+http://localhost:5000/analytics # Energy analytics
+http://localhost:5001/api       # Controller REST API
 ```
 
 ---
 
-## 📌 Summary
+**🌐 Web Interface: <http://localhost:5000>**
 
-- **Backend**: `./run.sh backend`
-- **Simulated nodes**: `./run.sh sim`
-- **Real hardware**: `./run.sh flash` + flash dongles
-- **Inspect data**: `./run.sh cli show`
-- **Control LEDs**: `./run.sh cli set node2 off`
-
-With these unified commands, the project is reproducible both in Docker-only mode, in Cooja simulation, or with physical Nordic dongles.
+**⚡ Built with:** Python, Flask, Docker, MQTT, MySQL, Contiki-NG, Machine Learning

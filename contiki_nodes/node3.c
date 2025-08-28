@@ -1,3 +1,15 @@
+/*
+ * Node 3 - Bedroom Sensor Node
+ * SOLO PROJECT Implementation with Button/LED Physical Interactions
+ * 
+ * Features:
+ * - Room occupancy detection
+ * - Ambient light monitoring  
+ * - Energy consumption tracking
+ * - Physical button for manual control
+ * - LED feedback for energy saving status
+ */
+
 #include "contiki.h"
 #include "sys/log.h"
 #include "net/ipv6/simple-udp.h"
@@ -5,8 +17,9 @@
 #include "mqtt.h"
 #include "dev/leds.h"
 #include "dev/button-hal.h"
+#include "dev/button-sensor.h"
 
-#define LOG_MODULE "Node3"
+#define LOG_MODULE "Node3-Bedroom"
 #define LOG_LEVEL LOG_LEVEL_INFO
 
 // MQTT broker config (Docker mosquito container)
@@ -15,11 +28,19 @@
 #define MQTT_BROKER_PORT 1883
 
 static struct mqtt_connection conn;
-static char pub_topic[] = "sensors/node3/light";
+static char pub_topic[] = "sensors/node3/data";
 static char sub_topic[] = "actuators/node3/led";
+static char button_topic[] = "sensors/node3/button";
+
+// SOLO PROJECT - Physical interaction states
+static int manual_override = 0;  // Manual control via button
+static int energy_saving_mode = 1; // Energy saving status
+static int button_count = 0;    // Button press counter
+static int led_status = 0;      // LED illumination status
 
 PROCESS(node3_process, "Node3 Process");
-AUTOSTART_PROCESSES(&node3_process);
+PROCESS(button_handler_process, "Button handler");
+AUTOSTART_PROCESSES(&node3_process, &button_handler_process);
 
 static void mqtt_event(struct mqtt_connection *m, mqtt_event_t event, void *data) {
   switch(event) {
@@ -31,10 +52,15 @@ static void mqtt_event(struct mqtt_connection *m, mqtt_event_t event, void *data
       struct mqtt_message *msg = (struct mqtt_message *)data;
       LOG_INFO("Incoming actuator cmd: %.*s\n", msg->payload_chunk_length, (char *)msg->payload_chunk);
       if(msg->payload_chunk_length > 0) {
+        // SOLO PROJECT - LED Control with Physical Feedback
         if(strncmp((char *)msg->payload_chunk, "on", 2) == 0) {
-          leds_on(LEDS_GREEN);
+          led_status = 1;
+          leds_on(LEDS_RED);  // Red = LED illumination ON
+          LOG_INFO("💡 LED turned ON via command\n");
         } else {
-          leds_off(LEDS_GREEN);
+          led_status = 0;
+          leds_off(LEDS_RED);
+          LOG_INFO("💡 LED turned OFF via command\n");
         }
       }
       break;
@@ -42,6 +68,48 @@ static void mqtt_event(struct mqtt_connection *m, mqtt_event_t event, void *data
     default:
       break;
   }
+}
+
+/*---------------------------------------------------------------------------*/
+/* SOLO PROJECT - Physical Button Interaction Handler */
+PROCESS_THREAD(button_handler_process, ev, data)
+{
+    PROCESS_BEGIN();
+    
+    // Activate button sensor
+    SENSORS_ACTIVATE(button_sensor);
+    
+    while(1) {
+        PROCESS_WAIT_EVENT_UNTIL(ev == sensors_event && data == &button_sensor);
+        
+        button_count++;
+        manual_override = !manual_override; // Toggle manual override
+        
+        LOG_INFO("🔘 BUTTON PRESSED! Count: %d, Manual Override: %s\n", 
+               button_count, manual_override ? "ON" : "OFF");
+        
+        // LED feedback for button press
+        if(manual_override) {
+            leds_on(LEDS_BLUE);  // Blue = Manual mode
+            LOG_INFO("💡 Manual control activated - LEDs under user control\n");
+        } else {
+            leds_off(LEDS_BLUE);
+            LOG_INFO("🤖 Automatic control restored - ML energy optimization active\n");
+        }
+        
+        // Send button press notification via MQTT
+        char button_msg[128];
+        snprintf(button_msg, sizeof(button_msg), 
+                 "{\"button_press\":%d,\"manual_override\":%d,\"device_id\":\"node3\"}", 
+                 button_count, manual_override);
+        
+        mqtt_publish(&conn, NULL, button_topic, (uint8_t *)button_msg, 
+                    strlen(button_msg), MQTT_QOS_LEVEL_0, MQTT_RETAIN_OFF);
+                         
+        LOG_INFO("📡 Button event sent via MQTT\n");
+    }
+    
+    PROCESS_END();
 }
 
 PROCESS_THREAD(node3_process, ev, data) {
@@ -55,39 +123,75 @@ PROCESS_THREAD(node3_process, ev, data) {
 
   etimer_set(&timer, CLOCK_SECOND * 10);
 
+  // Initialize SOLO PROJECT physical components
+  leds_init();
+  leds_off(LEDS_ALL);
+  
+  LOG_INFO("🏠 Node 3 (Bedroom) - SOLO PROJECT Implementation\n");
+  LOG_INFO("🔘 Button: Manual LED override control\n");
+  LOG_INFO("💡 LEDs: Red=Illumination, Green=Energy Saving, Blue=Manual Mode\n");
+
   while(1) {
     PROCESS_WAIT_EVENT();
     if(etimer_expired(&timer)) {
-      // Generate realistic smart home energy sensor data
-      light_val = random_rand() % 100; // ambient light sensor
+      // Generate realistic ambient light sensor data - Node3 simulates bedroom
+      // Bedroom typically has lower light levels (curtains, evening use)
+      light_val = 15 + (random_rand() % 45); // 15-60 lux range (dimmer bedroom)
       
-      // Simulate occupancy based on activity patterns
-      static int occupancy = 1; // Assume occupied for demo
+      // Simulate bedroom occupancy patterns (sleep cycles)
+      static int occupancy_counter = 0;
+      occupancy_counter++;
+      // Bedroom has night-time patterns and periodic empty periods
+      int occupancy = (occupancy_counter % 6 < 2) ? 0 : 1; // ~67% occupied (sleep time)
       
-      // Simulate temperature (indoor range)
-      int temperature = 20 + (random_rand() % 10); // 20-30°C
+      // Simulate temperature (bedroom range, slightly cooler)
+      int temperature = 18 + (random_rand() % 8); // 18-26°C
       
-      // Simulate energy sensors for smart energy optimization
-      // Solar surplus: positive = excess solar, negative = using grid
-      float solar_surplus = -0.5 + (random_rand() % 100) / 100.0; // -0.5 to +0.5 kW
+      // Energy consumption based on occupancy and manual override
+      float room_usage;
+      if(manual_override) {
+          // Manual control - user decides LED status regardless of optimization
+          room_usage = led_status ? 0.12 : 0.03;  // Bedroom lower energy usage
+          energy_saving_mode = 0;
+      } else {
+          // Automatic energy optimization mode
+          if(occupancy == 0 && room_usage > 0.08) {
+              // Energy waste detection - lights on but bedroom empty
+              room_usage = 0.02;  // Reduce consumption
+              energy_saving_mode = 1;
+              leds_on(LEDS_GREEN);  // Green = Energy saving active
+          } else if(occupancy == 1) {
+              room_usage = 0.08 + (random_rand() % 10) / 100.0;  // 0.08-0.18 kWh (lower for bedroom)
+              leds_off(LEDS_GREEN);
+              energy_saving_mode = 0;
+          } else {
+              room_usage = 0.01 + (random_rand() % 3) / 100.0;  // Very low consumption when empty
+          }
+      }
       
-      // Room energy usage (simulated from appliances)
-      float room_usage = 0.02 + (random_rand() % 20) / 100.0; // 0.02-0.22 kW
-      
-      // Weather simulation for energy model
-      float cloud_cover = (random_rand() % 100) / 100.0; // 0.0-1.0
-      float visibility = 5 + (random_rand() % 10); // 5-15 km
-      
-      char msg[256];
+      char msg[512];
       snprintf(msg, sizeof(msg), 
-               "{\"sensor_id\":\"node3\",\"lux\":%d,\"occupancy\":%d,\"temperature\":%d,"
-               "\"solar_surplus\":%.2f,\"room_usage\":%.2f,\"cloud_cover\":%.2f,\"visibility\":%.1f}", 
-               light_val, occupancy, temperature, solar_surplus, room_usage, cloud_cover, visibility);
+               "{"
+               "\"device_id\":\"node3\","
+               "\"location\":\"bedroom\","
+               "\"lux\":%d,"
+               "\"occupancy\":%d,"
+               "\"temperature\":%d,"
+               "\"room_usage\":%.3f,"
+               "\"led_status\":%d,"
+               "\"manual_override\":%d,"
+               "\"energy_saving_mode\":%d,"
+               "\"button_presses\":%d"
+               "}", 
+               light_val, occupancy, temperature, room_usage,
+               led_status, manual_override, energy_saving_mode, button_count);
       
       mqtt_publish(&conn, NULL, pub_topic, (uint8_t *)msg, strlen(msg), MQTT_QOS_LEVEL_0, MQTT_RETAIN_OFF);
 
-      LOG_INFO("Published: light=%d, occ=%d, temp=%d, solar=%.2f, room=%.2f\n", 
-               light_val, occupancy, temperature, solar_surplus, room_usage);
+      LOG_INFO("📊 [BEDROOM] Lux:%d, Occ:%d, T:%d°C, Usage:%.3fkWh, LED:%s, Mode:%s\n", 
+               light_val, occupancy, temperature, room_usage,
+               led_status ? "ON" : "OFF",
+               manual_override ? "MANUAL" : "AUTO");
       etimer_reset(&timer);
     }
   }

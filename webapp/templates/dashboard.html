@@ -1,0 +1,955 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IoT Energy Monitoring Dashboard</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #333;
+            min-height: 100vh;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        .header {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 15px;
+            padding: 20px;
+            margin-bottom: 20px;
+            text-align: center;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+        }
+        
+        .header h1 {
+            color: #2c3e50;
+            margin-bottom: 10px;
+        }
+        
+        .status-indicators {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            margin-top: 15px;
+        }
+        
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 15px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 500;
+        }
+        
+        .status-online {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .status-offline {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        
+        .status-warning {
+            background: #fff3cd;
+            color: #856404;
+        }
+        
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .card {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 15px;
+            padding: 20px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+            backdrop-filter: blur(10px);
+        }
+        
+        .card h3 {
+            color: #2c3e50;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .sensor-card {
+            border-left: 4px solid #3498db;
+        }
+        
+        .energy-card {
+            border-left: 4px solid #27ae60;
+        }
+        
+        .control-card {
+            border-left: 4px solid #e74c3c;
+        }
+        
+        .sensor-data {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 10px;
+            margin-top: 10px;
+        }
+        
+        .sensor-value {
+            text-align: center;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+        
+        .sensor-value .label {
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 5px;
+        }
+        
+        .sensor-value .value {
+            font-size: 18px;
+            font-weight: bold;
+            color: #2c3e50;
+        }
+        
+        .energy-stats {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+        }
+        
+        .stat-item {
+            text-align: center;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+        
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #27ae60;
+        }
+        
+        .stat-label {
+            font-size: 12px;
+            color: #666;
+            margin-top: 5px;
+        }
+        
+        .control-buttons {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        
+        .btn {
+            flex: 1;
+            padding: 12px;
+            border: none;
+            border-radius: 8px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        .btn-on {
+            background: #27ae60;
+            color: white;
+        }
+        
+        .btn-off {
+            background: #e74c3c;
+            color: white;
+        }
+        
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+        }
+        
+        .chart-container {
+            height: 250px;
+            position: relative;
+        }
+        
+        .chart-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .nav-links {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            margin-top: 15px;
+        }
+        
+        .nav-link {
+            color: #3498db;
+            text-decoration: none;
+            padding: 8px 16px;
+            border-radius: 5px;
+            transition: background 0.3s;
+        }
+        
+        .nav-link:hover {
+            background: rgba(52, 152, 219, 0.1);
+        }
+        
+        .led-status {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-left: 5px;
+        }
+        
+        .led-on {
+            background: #27ae60;
+            box-shadow: 0 0 8px #27ae60;
+        }
+        
+        .led-off {
+            background: #95a5a6;
+        }
+        
+        .manual-mode {
+            background: #f39c12;
+            color: white;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 11px;
+            margin-left: 10px;
+        }
+        
+        .timestamp {
+            font-size: 11px;
+            color: #666;
+            margin-top: 5px;
+        }
+        
+        .override-info {
+            margin: 10px 0;
+            padding: 8px;
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            border-radius: 5px;
+            font-size: 12px;
+        }
+        
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .duration-select {
+            width: 100%;
+            padding: 6px;
+            border: 2px solid #ddd;
+            border-radius: 4px;
+            font-size: 12px;
+            background: white;
+            margin-bottom: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🏠 Smart Home Energy Monitoring Dashboard</h1>
+            <p>Real-time IoT sensor monitoring with AI-powered energy optimization</p>
+            
+            <div class="status-indicators">
+                <div class="status-indicator" id="mqtt-status">
+                    <span>🔌</span> MQTT: <span id="mqtt-text">Connecting...</span>
+                </div>
+                <div class="status-indicator" id="db-status">
+                    <span>🗄️</span> Database: <span id="db-text">Connecting...</span>
+                </div>
+                <div class="status-indicator" id="nodes-status">
+                    <span>📡</span> Nodes Online: <span id="nodes-count">0</span>
+                </div>
+                <div class="status-indicator" id="ai-status">
+                    <span>🤖</span> AI Optimizer: <span id="ai-text">Initializing...</span>
+                </div>
+            </div>
+            
+            <div class="nav-links">
+                <a href="/" class="nav-link">📊 Dashboard</a>
+                <a href="/control" class="nav-link">🎮 Control</a>
+                <a href="/analytics" class="nav-link">📈 Analytics</a>
+            </div>
+        </div>
+        
+        <div class="grid">
+            <!-- Energy Statistics Card -->
+            <div class="card energy-card">
+                <h3>⚡ Energy Statistics</h3>
+                <div class="energy-stats">
+                    <div class="stat-item">
+                        <div class="stat-value" id="total-consumption">0.000</div>
+                        <div class="stat-label">Total Consumption (kWh)</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="energy-saved">0.000</div>
+                        <div class="stat-label">Energy Saved (kWh)</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="optimization-events">0</div>
+                        <div class="stat-label">Optimization Events</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="manual-overrides">0</div>
+                        <div class="stat-label">Manual Overrides</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Charts Grid - Half Page Layout -->
+        <div class="chart-grid">
+            <div class="card chart-container">
+                <h3>📈 Real-time Energy Consumption</h3>
+                <canvas id="energyChart"></canvas>
+            </div>
+            
+            <!-- Temperature Chart -->
+            <div class="card chart-container">
+                <h3>🌡️ Temperature Monitoring</h3>
+                <canvas id="temperatureChart"></canvas>
+            </div>
+            
+            <!-- Light Levels Chart -->
+            <div class="card chart-container">
+                <h3>💡 Light Levels (Lux)</h3>
+                <canvas id="lightChart"></canvas>
+            </div>
+            
+            <!-- Occupancy Chart -->
+            <div class="card chart-container">
+                <h3>👤 Occupancy Status</h3>
+                <canvas id="occupancyChart"></canvas>
+            </div>
+        </div>
+        
+        <!-- Dynamic sensor cards will be inserted here -->
+        <div class="grid" id="sensor-cards">
+        </div>
+    </div>
+
+    <script>
+        // Initialize Socket.IO connection
+        const socket = io();
+        
+        // Chart configuration
+        const ctx = document.getElementById('energyChart').getContext('2d');
+        const energyChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Living Room',
+                    data: [],
+                    borderColor: '#3498db',
+                    backgroundColor: 'rgba(52, 152, 219, 0.1)',
+                    tension: 0.4
+                }, {
+                    label: 'Kitchen',
+                    data: [],
+                    borderColor: '#e74c3c',
+                    backgroundColor: 'rgba(231, 76, 60, 0.1)',
+                    tension: 0.4
+                }, {
+                    label: 'Bedroom',
+                    data: [],
+                    borderColor: '#27ae60',
+                    backgroundColor: 'rgba(39, 174, 96, 0.1)',
+                    tension: 0.4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        title: {
+                            display: true,
+                            text: 'Energy Consumption (kWh)'
+                        }
+                    },
+                    x: {
+                        title: {
+                            display: true,
+                            text: 'Time'
+                        }
+                    }
+                },
+                plugins: {
+                    legend: {
+                        display: true,
+                        position: 'top'
+                    }
+                }
+            }
+        });
+        
+        // Temperature Chart
+        const tempCtx = document.getElementById('temperatureChart').getContext('2d');
+        const temperatureChart = new Chart(tempCtx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Living Room',
+                    data: [],
+                    borderColor: '#3498db',
+                    backgroundColor: 'rgba(52, 152, 219, 0.1)',
+                    tension: 0.4
+                }, {
+                    label: 'Kitchen',
+                    data: [],
+                    borderColor: '#e74c3c',
+                    backgroundColor: 'rgba(231, 76, 60, 0.1)',
+                    tension: 0.4
+                }, {
+                    label: 'Bedroom',
+                    data: [],
+                    borderColor: '#27ae60',
+                    backgroundColor: 'rgba(39, 174, 96, 0.1)',
+                    tension: 0.4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: {
+                        beginAtZero: false,
+                        min: 15,
+                        max: 30,
+                        title: {
+                            display: true,
+                            text: 'Temperature (°C)'
+                        }
+                    },
+                    x: {
+                        title: {
+                            display: true,
+                            text: 'Time'
+                        }
+                    }
+                },
+                plugins: {
+                    legend: {
+                        display: true,
+                        position: 'top'
+                    }
+                }
+            }
+        });
+        
+        // Light Levels Chart
+        const lightCtx = document.getElementById('lightChart').getContext('2d');
+        const lightChart = new Chart(lightCtx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Living Room',
+                    data: [],
+                    borderColor: '#3498db',
+                    backgroundColor: 'rgba(52, 152, 219, 0.1)',
+                    tension: 0.4
+                }, {
+                    label: 'Kitchen',
+                    data: [],
+                    borderColor: '#e74c3c',
+                    backgroundColor: 'rgba(231, 76, 60, 0.1)',
+                    tension: 0.4
+                }, {
+                    label: 'Bedroom',
+                    data: [],
+                    borderColor: '#27ae60',
+                    backgroundColor: 'rgba(39, 174, 96, 0.1)',
+                    tension: 0.4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        title: {
+                            display: true,
+                            text: 'Light Level (Lux)'
+                        }
+                    },
+                    x: {
+                        title: {
+                            display: true,
+                            text: 'Time'
+                        }
+                    }
+                },
+                plugins: {
+                    legend: {
+                        display: true,
+                        position: 'top'
+                    }
+                }
+            }
+        });
+        
+        // Occupancy Chart
+        const occupancyCtx = document.getElementById('occupancyChart').getContext('2d');
+        const occupancyChart = new Chart(occupancyCtx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Living Room',
+                    data: [],
+                    borderColor: '#3498db',
+                    backgroundColor: 'rgba(52, 152, 219, 0.1)',
+                    tension: 0.4,
+                    stepped: true
+                }, {
+                    label: 'Kitchen',
+                    data: [],
+                    borderColor: '#e74c3c',
+                    backgroundColor: 'rgba(231, 76, 60, 0.1)',
+                    tension: 0.4,
+                    stepped: true
+                }, {
+                    label: 'Bedroom',
+                    data: [],
+                    borderColor: '#27ae60',
+                    backgroundColor: 'rgba(39, 174, 96, 0.1)',
+                    tension: 0.4,
+                    stepped: true
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        max: 1.2,
+                        ticks: {
+                            stepSize: 1,
+                            callback: function(value) {
+                                return value === 1 ? 'Occupied' : value === 0 ? 'Empty' : '';
+                            }
+                        },
+                        title: {
+                            display: true,
+                            text: 'Occupancy Status'
+                        }
+                    },
+                    x: {
+                        title: {
+                            display: true,
+                            text: 'Time'
+                        }
+                    }
+                },
+                plugins: {
+                    legend: {
+                        display: true,
+                        position: 'top'
+                    }
+                }
+            }
+        });
+        
+        // Update system status
+        function updateStatus(status) {
+            const mqttStatus = document.getElementById('mqtt-status');
+            const dbStatus = document.getElementById('db-status');
+            const aiStatus = document.getElementById('ai-status');
+            const mqttText = document.getElementById('mqtt-text');
+            const dbText = document.getElementById('db-text');
+            const aiText = document.getElementById('ai-text');
+            const nodesCount = document.getElementById('nodes-count');
+            
+            mqttStatus.className = `status-indicator ${status.system_status.mqtt_connected ? 'status-online' : 'status-offline'}`;
+            mqttText.textContent = status.system_status.mqtt_connected ? 'Connected' : 'Disconnected';
+            
+            dbStatus.className = `status-indicator ${status.system_status.db_connected ? 'status-online' : 'status-offline'}`;
+            dbText.textContent = status.system_status.db_connected ? 'Connected' : 'Disconnected';
+            
+            // AI status based on optimization events
+            const aiActive = status.energy_stats.optimization_events > 0;
+            aiStatus.className = `status-indicator ${aiActive ? 'status-online' : 'status-warning'}`;
+            aiText.textContent = aiActive ? 'Active' : 'Inactive';
+            
+            nodesCount.textContent = status.system_status.nodes_online || 0;
+        }
+        
+        // Update energy statistics
+        function updateEnergyStats(stats) {
+            document.getElementById('total-consumption').textContent = stats.total_consumption.toFixed(3);
+            document.getElementById('energy-saved').textContent = stats.energy_saved.toFixed(3);
+            document.getElementById('optimization-events').textContent = stats.optimization_events;
+            document.getElementById('manual-overrides').textContent = stats.manual_overrides;
+        }
+        
+        // Create or update sensor card
+        function updateSensorCard(deviceId, data, timestamp, type) {
+            console.log(`🔧 Updating card for ${deviceId}:`, data);
+            
+            const container = document.getElementById('sensor-cards');
+            let card = document.getElementById(`card-${deviceId}`);
+            
+            if (!card) {
+                card = document.createElement('div');
+                card.className = 'card sensor-card';
+                card.id = `card-${deviceId}`;
+                container.appendChild(card);
+                console.log(`✨ Created new card for ${deviceId}`);
+            }
+            
+            const location = data.location || deviceId;
+            const isOccupied = data.occupancy === 1;
+            const ledStatus = data.led_status ? 'led-on' : 'led-off';
+            const manualMode = data.manual_override ? '<span class="manual-mode">MANUAL</span>' : '';
+            
+            // Check if device has override (fetch from API)
+            fetchDeviceOverride(deviceId).then(override => {
+                const overrideInfo = override?.active ? `
+                    <div class="override-info" style="margin: 10px 0; padding: 8px; background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 5px; font-size: 12px;">
+                        <strong>Override Active:</strong> ${override.status.toUpperCase()} 
+                        (${override.type}${override.expires_at ? ' - expires: ' + new Date(override.expires_at).toLocaleString() : ''})
+                    </div>
+                ` : '';
+                
+                card.innerHTML = `
+                    <h3>
+                        🏠 ${location}
+                        <span class="led-status ${ledStatus}"></span>
+                        ${manualMode}
+                    </h3>
+                    
+                    <!-- Mode Indicators -->
+                    <div style="display: flex; gap: 10px; margin-bottom: 15px;">
+                        <div style="padding: 4px 10px; border-radius: 12px; font-size: 11px; font-weight: bold; ${override?.active ? 'background: #fff3cd; color: #856404;' : 'background: #d4edda; color: #155724;'}">
+                            ${override?.active ? '🔧 Manual Mode' : '🤖 Auto Mode'}
+                        </div>
+                        ${data.energy_saving_mode ? '<div style="padding: 4px 10px; border-radius: 12px; font-size: 11px; font-weight: bold; background: #d1ecf1; color: #0c5460;">💚 Energy Saving</div>' : ''}
+                        ${data.led_status ? '<div style="padding: 4px 10px; border-radius: 12px; font-size: 11px; font-weight: bold; background: #ffebcd; color: #8b4513;">💡 LED ON</div>' : ''}
+                    </div>
+                    
+                    <div class="sensor-data">
+                        <div class="sensor-value">
+                            <div class="label">💡 Light</div>
+                            <div class="value">${data.lux || 'N/A'} lux</div>
+                        </div>
+                        <div class="sensor-value">
+                            <div class="label">👤 Occupancy</div>
+                            <div class="value">${isOccupied ? '✅ Yes' : '❌ No'}</div>
+                        </div>
+                        <div class="sensor-value">
+                            <div class="label">🌡️ Temperature</div>
+                            <div class="value">${data.temperature ? data.temperature.toFixed(1) : 'N/A'}°C</div>
+                        </div>
+                        <div class="sensor-value">
+                            <div class="label">⚡ Usage</div>
+                            <div class="value">${(data.room_usage || 0).toFixed(3)} kWh</div>
+                        </div>
+                        <div class="sensor-value">
+                            <div class="label">🔘 Button</div>
+                            <div class="value">${data.button_presses || 0}</div>
+                        </div>
+                        <div class="sensor-value">
+                            <div class="label">🆔 Node ID</div>
+                            <div class="value">${deviceId}</div>
+                        </div>
+                    </div>
+                    
+                    ${overrideInfo}
+                    
+                    <!-- Enhanced Control Buttons -->
+                    <div style="margin-top: 15px;">
+                        <div style="font-size: 14px; font-weight: bold; margin-bottom: 8px; color: #2c3e50;">💡 LED Control</div>
+                        
+                        <!-- Duration Selection -->
+                        <div style="margin-bottom: 10px;">
+                            <select id="duration-${deviceId}" style="width: 100%; padding: 6px; border: 2px solid #ddd; border-radius: 4px; font-size: 12px; background: white;">
+                                <option value="24h">24 Hours</option>
+                                <option value="1h">1 Hour</option>
+                                <option value="4h">4 Hours</option>
+                                <option value="12h">12 Hours</option>
+                                <option value="permanent">Permanent</option>
+                            </select>
+                        </div>
+                        
+                        <div class="control-buttons">
+                            <button class="btn btn-on" onclick="sendOverrideCommand('${deviceId}', 'on')" style="flex: 1;">💡 LED ON</button>
+                            <button class="btn btn-off" onclick="sendOverrideCommand('${deviceId}', 'off')" style="flex: 1;">💡 LED OFF</button>
+                        </div>
+                        <div style="margin-top: 8px;">
+                            <button class="btn" onclick="removeOverride('${deviceId}')" ${!override?.active ? 'disabled' : ''} style="width: 100%; background: #6c757d; color: white; opacity: ${override?.active ? '1' : '0.6'};">
+                                🤖 AUTO MODE
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="timestamp">🕒 Last update: ${new Date(timestamp).toLocaleTimeString()}</div>
+                `;
+            });
+            
+            // Update chart data
+            updateChart(deviceId, data, timestamp);
+        }
+        
+        // Update chart with new data
+        function updateChart(deviceId, data, timestamp) {
+            const time = new Date(timestamp).toLocaleTimeString();
+            const consumption = data.room_usage || 0;
+            const temperature = data.temperature || 0;
+            const lux = data.lux || 0;
+            const occupancy = data.occupancy || 0;
+            
+            let datasetIndex = -1;
+            if (deviceId === 'node1') datasetIndex = 0;
+            else if (deviceId === 'node2') datasetIndex = 1;
+            else if (deviceId === 'node3') datasetIndex = 2;
+            
+            if (datasetIndex >= 0) {
+                // Update Energy Chart
+                const energyDataset = energyChart.data.datasets[datasetIndex];
+                energyDataset.data.push(consumption);
+                if (energyDataset.data.length > 20) {
+                    energyDataset.data.shift();
+                }
+                
+                // Update Temperature Chart
+                const tempDataset = temperatureChart.data.datasets[datasetIndex];
+                tempDataset.data.push(temperature);
+                if (tempDataset.data.length > 20) {
+                    tempDataset.data.shift();
+                }
+                
+                // Update Light Chart
+                const lightDataset = lightChart.data.datasets[datasetIndex];
+                lightDataset.data.push(lux);
+                if (lightDataset.data.length > 20) {
+                    lightDataset.data.shift();
+                }
+                
+                // Update Occupancy Chart
+                const occupancyDataset = occupancyChart.data.datasets[datasetIndex];
+                occupancyDataset.data.push(occupancy);
+                if (occupancyDataset.data.length > 20) {
+                    occupancyDataset.data.shift();
+                }
+            }
+            
+            // Update labels for all charts (only once per update)
+            if (datasetIndex === 0) { // Only update labels from the first device to avoid duplicates
+                energyChart.data.labels.push(time);
+                if (energyChart.data.labels.length > 20) {
+                    energyChart.data.labels.shift();
+                }
+                
+                // Copy labels to other charts
+                temperatureChart.data.labels = [...energyChart.data.labels];
+                lightChart.data.labels = [...energyChart.data.labels];
+                occupancyChart.data.labels = [...energyChart.data.labels];
+                
+                // Update all charts
+                energyChart.update('none');
+                temperatureChart.update('none');
+                lightChart.update('none');
+                occupancyChart.update('none');
+            }
+        }
+        
+        // Send LED control command
+        function sendCommand(deviceId, command) {
+            socket.emit('request_control', {
+                device_id: deviceId,
+                command: command
+            });
+        }
+        
+        // Fetch device override status
+        async function fetchDeviceOverride(deviceId) {
+            try {
+                const response = await fetch('/api/devices');
+                const devices = await response.json();
+                return devices[deviceId]?.override || null;
+            } catch (error) {
+                console.error('Error fetching device override:', error);
+                return null;
+            }
+        }
+        
+        // Send override command (like in control panel)
+        function sendOverrideCommand(deviceId, command) {
+            const durationSelect = document.getElementById(`duration-${deviceId}`);
+            const duration = durationSelect ? durationSelect.value : '24h';
+            
+            const overrideData = {
+                status: command,
+                type: duration
+            };
+            
+            fetch(`/api/devices/${deviceId}/override`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(overrideData)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    console.log(`✅ Override set: ${deviceId} LED ${command.toUpperCase()} for ${duration}`);
+                    // Refresh the card to show updated override status
+                    setTimeout(() => {
+                        fetch('/api/devices')
+                            .then(response => response.json())
+                            .then(devices => {
+                                const deviceData = devices[deviceId];
+                                if (deviceData) {
+                                    updateSensorCard(deviceId, deviceData.latest_data, deviceData.latest_data.timestamp, 'sensor');
+                                }
+                            });
+                    }, 1000);
+                } else {
+                    console.error(`❌ Override failed: ${data.error || 'Unknown error'}`);
+                }
+            })
+            .catch(error => {
+                console.error(`❌ Override error: ${error.message}`);
+            });
+        }
+        
+        // Remove override (return to auto mode)
+        function removeOverride(deviceId) {
+            fetch(`/api/devices/${deviceId}/override`, {
+                method: 'DELETE'
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    console.log(`✅ ${deviceId} returned to AUTO mode`);
+                    // Refresh the card to show updated status
+                    setTimeout(() => {
+                        fetch('/api/devices')
+                            .then(response => response.json())
+                            .then(devices => {
+                                const deviceData = devices[deviceId];
+                                if (deviceData) {
+                                    updateSensorCard(deviceId, deviceData.latest_data, deviceData.latest_data.timestamp, 'sensor');
+                                }
+                            });
+                    }, 1000);
+                } else {
+                    console.error(`❌ Auto mode failed: ${data.error || 'Unknown error'}`);
+                }
+            })
+            .catch(error => {
+                console.error(`❌ Auto mode error: ${error.message}`);
+            });
+        }
+        
+        // Socket event handlers
+        socket.on('connect', function() {
+            console.log('Connected to server');
+        });
+        
+        socket.on('system_status', function(data) {
+            updateStatus(data);
+            updateEnergyStats(data.energy_stats);
+            
+            // Update existing sensor cards
+            Object.entries(data.latest_data || {}).forEach(([deviceId, deviceData]) => {
+                updateSensorCard(deviceId, deviceData.data, deviceData.timestamp, deviceData.type);
+            });
+        });
+        
+        socket.on('sensor_update', function(data) {
+            updateSensorCard(data.device_id, data.data, data.timestamp, data.type);
+        });
+        
+        socket.on('control_response', function(data) {
+            if (data.success) {
+                console.log(`✅ Command ${data.command} sent to ${data.device_id}`);
+            } else {
+                console.log(`❌ Failed to send command to ${data.device_id}`);
+            }
+        });
+        
+        // Initialize the page
+        function initializePage() {
+            console.log('🚀 Initializing IoT Dashboard...');
+            
+            // Fetch initial data
+            fetch('/api/status')
+                .then(response => response.json())
+                .then(data => {
+                    console.log('📊 Initial data received:', data);
+                    updateStatus(data);
+                    updateEnergyStats(data.energy_stats);
+                    
+                    // Display initial sensor data
+                    Object.entries(data.latest_data || {}).forEach(([deviceId, deviceInfo]) => {
+                        console.log(`📡 Initializing device: ${deviceId}`, deviceInfo);
+                        updateSensorCard(deviceId, deviceInfo.data, deviceInfo.timestamp, deviceInfo.type);
+                    });
+                })
+                .catch(error => console.error('❌ Error fetching initial data:', error));
+            
+            // Set up real-time updates
+            setInterval(() => {
+                fetch('/api/status')
+                    .then(response => response.json())
+                    .then(data => {
+                        console.log('🔄 Real-time update:', new Date().toLocaleTimeString());
+                        updateStatus(data);
+                        updateEnergyStats(data.energy_stats);
+                        
+                        // Update sensor data
+                        Object.entries(data.latest_data || {}).forEach(([deviceId, deviceInfo]) => {
+                            updateSensorCard(deviceId, deviceInfo.data, deviceInfo.timestamp, deviceInfo.type);
+                        });
+                    })
+                    .catch(error => console.error('❌ Error in real-time update:', error));
+            }, 1000); // Update every 1 seconds
+        }
+        
+        // Call initialization when page loads
+        document.addEventListener('DOMContentLoaded', initializePage);
+    </script>
+</body>
+</html>

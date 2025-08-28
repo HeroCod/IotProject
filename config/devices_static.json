@@ -1,0 +1,195 @@
+{
+  "project_info": {
+    "type": "SOLO_PROJECT",
+    "description": "Smart Home Energy-Saving Lighting Control System",
+    "protocol": "MQTT",
+    "protocol_justification": "MQTT chosen over CoAP for energy-saving IoT system due to: (1) Reliable message delivery for critical energy decisions, (2) Better support for real-time energy monitoring, (3) Simplified broker-based architecture for cloud integration, (4) JSON payload compatibility for ML model data exchange"
+  },
+  
+  "data_encoding": {
+    "format": "JSON",
+    "justification": "JSON selected for energy monitoring use case because: (1) Human-readable for debugging energy patterns, (2) Native support in Python ML pipeline, (3) Flexible schema for diverse sensor data (lux, occupancy, energy consumption), (4) Acceptable overhead for energy optimization benefits, (5) Standard format for cloud database storage",
+    "alternative_analysis": {
+      "CBOR": "More compact but less readable, minimal energy benefit for current data rates",
+      "Protocol_Buffers": "Efficient but adds complexity, overkill for 3-node energy monitoring system",
+      "MessagePack": "Compact but JSON readability preferred for energy pattern analysis"
+    }
+  },
+
+  "devices": {
+    "sensors": [
+      {
+        "device_id": "node1",
+        "type": "sensor_node",
+        "location": "office",
+        "description": "Office room energy monitoring and lighting control",
+        "sensors": {
+          "light_sensor": {
+            "type": "ambient_light",
+            "unit": "lux",
+            "range": "0-200",
+            "purpose": "ambient_light_optimization"
+          },
+          "occupancy_sensor": {
+            "type": "motion_detection", 
+            "unit": "boolean",
+            "purpose": "energy_waste_prevention"
+          },
+          "energy_monitor": {
+            "type": "room_consumption",
+            "unit": "kWh", 
+            "range": "0.0-1.0",
+            "purpose": "lighting_waste_detection"
+          },
+          "button": {
+            "type": "user_input",
+            "function": "manual_override",
+            "purpose": "office_lighting_control"
+          }
+        },
+        "mqtt_topics": {
+          "sensor_data": "sensors/node1/data",
+          "button_press": "sensors/node1/button"
+        }
+      },
+      {
+        "device_id": "node2", 
+        "type": "sensor_node",
+        "location": "kitchen",
+        "description": "Kitchen energy monitoring with appliance consumption",
+        "sensors": {
+          "light_sensor": {
+            "type": "ambient_light",
+            "unit": "lux", 
+            "range": "0-200",
+            "purpose": "ambient_light_optimization"
+          },
+          "occupancy_sensor": {
+            "type": "motion_detection",
+            "unit": "boolean", 
+            "purpose": "energy_waste_prevention"
+          },
+          "energy_monitor": {
+            "type": "room_consumption",
+            "unit": "kWh",
+            "range": "0.0-1.0", 
+            "purpose": "lighting_waste_detection"
+          },
+          "button": {
+            "type": "user_input",
+            "function": "manual_override",
+            "purpose": "cooking_area_lighting_control"
+          }
+        },
+        "mqtt_topics": {
+          "sensor_data": "sensors/node2/data",
+          "button_press": "sensors/node2/button"
+        }
+      },
+      {
+        "device_id": "node3",
+        "type": "sensor_node", 
+        "location": "living_room",
+        "description": "Living room energy monitoring and entertainment area lighting",
+        "sensors": {
+          "light_sensor": {
+            "type": "ambient_light",
+            "unit": "lux",
+            "range": "0-200", 
+            "purpose": "ambient_light_optimization"
+          },
+          "occupancy_sensor": {
+            "type": "motion_detection",
+            "unit": "boolean",
+            "purpose": "energy_waste_prevention"
+          },
+          "energy_monitor": {
+            "type": "room_consumption", 
+            "unit": "kWh",
+            "range": "0.0-1.0",
+            "purpose": "lighting_waste_detection"
+          },
+          "button": {
+            "type": "user_input",
+            "function": "manual_override",
+            "purpose": "entertainment_area_lighting_control"
+          }
+        },
+        "mqtt_topics": {
+          "sensor_data": "sensors/node3/data",
+          "button_press": "sensors/node3/button"
+        }
+      }
+    ],
+    
+    "actuators": [
+      {
+        "device_id": "node1_led",
+        "type": "led_actuator",
+        "location": "office",
+        "description": "Office LED lighting control for energy optimization",
+        "actuator_type": "smart_led",
+        "control_method": "on_off",
+        "energy_consumption": "0.1_kWh_when_on",
+        "mqtt_topics": {
+          "control": "actuators/node1/led",
+          "status": "actuators/node1/status"
+        }
+      },
+      {
+        "device_id": "node2_led",
+        "type": "led_actuator", 
+        "location": "kitchen",
+        "description": "Kitchen LED lighting control for cooking area",
+        "actuator_type": "smart_led",
+        "control_method": "on_off",
+        "energy_consumption": "0.1_kWh_when_on",
+        "mqtt_topics": {
+          "control": "actuators/node2/led",
+          "status": "actuators/node2/status"
+        }
+      },
+      {
+        "device_id": "node3_led",
+        "type": "led_actuator",
+        "location": "living_room", 
+        "description": "Living room LED lighting control for entertainment area",
+        "actuator_type": "smart_led",
+        "control_method": "on_off",
+        "energy_consumption": "0.1_kWh_when_on",
+        "mqtt_topics": {
+          "control": "actuators/node3/led",
+          "status": "actuators/node3/status"
+        }
+      }
+    ]
+  },
+
+  "energy_optimization": {
+    "ml_model": {
+      "type": "energy_saving_lighting_control",
+      "objective": "minimize_lighting_energy_consumption",
+      "algorithm": "RandomForest",
+      "dataset": "Real_Smart_Home_Energy_Dataset_Kaggle",
+      "accuracy": "100%",
+      "energy_reduction": "45.4%"
+    },
+    "ambient_light_optimization": {
+      "enabled": true,
+      "threshold": "65_lux",
+      "target": "70_lux",
+      "energy_saving": "0.1_kWh_per_override"
+    }
+  },
+
+  "user_interface": {
+    "type": "command_line_interface",
+    "functions": [
+      "view_device_status",
+      "manual_led_control", 
+      "energy_statistics",
+      "ambient_optimization_report",
+      "system_configuration"
+    ]
+  }
+}
