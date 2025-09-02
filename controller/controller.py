@@ -12,22 +12,22 @@ Features:
 """
 
 import os
+import sys
 import json
-import threading
-import time
-import warnings
 import logging
 import signal
-import sys
+import threading
+import time
+import traceback
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
-from flask import Flask, jsonify, request
+
+import joblib
+import mysql.connector
+import pandas as pd
 import paho.mqtt.client as mqtt
 import paho.mqtt.publish as publish
-import mysql.connector
-import joblib
-import pandas as pd
-import numpy as np
+from flask import Flask, jsonify, request
 
 # Configuration
 MQTT_BROKER = os.environ.get("MQTT_BROKER", "mosquitto")
@@ -97,261 +97,152 @@ last_device_states = {}  # {device_id: last_led_command} - Track actual state ch
 
 class DatabaseManager:
     def __init__(self):
-        self.connection = None
+        self.pool = None
         self.connection_attempts = 0
-        self.max_retries = 3
-        self._connection_lock = threading.Lock()  # Thread safety for connection operations
+        self.max_retries = 5
         self.connect()
-    
-    def is_connected(self):
-        """Check if database connection is alive"""
-        with self._connection_lock:
-            if not self.connection:
-                return False
-            try:
-                # Simple test query instead of ping to avoid issues
-                cursor = self.connection.cursor(buffered=True)
-                cursor.execute("SELECT 1")
-                cursor.fetchone()
-                cursor.close()
-                return True
-            except (mysql.connector.Error, AttributeError, ReferenceError):
-                # Connection is dead or corrupted
-                self._close_connection()
-                return False
-    
-    def _close_connection(self):
-        """Safely close existing connection"""
-        if self.connection:
-            try:
-                if self.connection.is_connected():
-                    self.connection.close()
-            except:
-                pass  # Ignore errors during close
-            finally:
-                self.connection = None
-    
-    def ensure_connection(self):
-        """Ensure database connection is alive, reconnect if needed"""
-        if not self.is_connected():
-            logger.warning("🔄 Database connection lost, attempting reconnection...")
-            self.connect()
-        return self.connection is not None
-    
+
     def connect(self):
-        """Connect to MySQL database with retry logic"""
-        with self._connection_lock:
-            self.connection_attempts += 1
-            
+        """Create a connection pool with retry logic"""
+        while self.connection_attempts < self.max_retries:
             try:
-                logger.info(f"🔗 Attempting database connection to {MYSQL_HOST}:{MYSQL_DB} (attempt {self.connection_attempts})")
-                
-                # Close existing connection if any
-                self._close_connection()
-                
-                # Create new connection with conservative settings
-                self.connection = mysql.connector.connect(
+                logger.info(f"🔗 Creating database connection pool for {MYSQL_HOST}:{MYSQL_DB} (attempt {self.connection_attempts + 1})")
+                self.pool = mysql.connector.pooling.MySQLConnectionPool(
+                    pool_name="iot_pool",
+                    pool_size=10,
                     host=MYSQL_HOST,
                     user=MYSQL_USER,
                     password=MYSQL_PASSWORD,
                     database=MYSQL_DB,
-                    connect_timeout=30,
-                    autocommit=True,  # Enable autocommit to prevent transaction issues
-                    buffered=True,    # Use buffered connections by default
+                    connect_timeout=10,
+                    autocommit=True,
+                    buffered=True,
                     raise_on_warnings=False,
                     sql_mode='',
                     use_unicode=True,
-                    charset='utf8mb4'  # Better unicode support
+                    charset='utf8mb4'
                 )
-                
-                # Test connection with simple query
-                if self.connection and self.connection.is_connected():
-                    cursor = self.connection.cursor(buffered=True)
-                    cursor.execute("SELECT 1")
-                    cursor.fetchone()
-                    cursor.close()
-                    
-                    # Create tables after confirming connection works
-                    self._create_tables()
-                    
-                    # Verify connection is still good after table creation
-                    if self.connection and self.connection.is_connected():
-                        logger.info("✅ Database connected and tables initialized")
-                        self.connection_attempts = 0  # Reset counter on success
-                    else:
-                        logger.error("❌ Connection lost during table creation")
-                        raise mysql.connector.Error("Connection lost during table creation")
-                else:
-                    logger.error("❌ Failed to establish valid connection")
-                    raise mysql.connector.Error("Failed to establish valid connection")
-                
+                # Test the pool by getting a connection
+                conn = self.pool.get_connection()
+                conn.close()
+                logger.info("✅ Database connection pool created successfully.")
+                self._create_tables()
+                return
             except mysql.connector.Error as e:
-                log_critical_error("db", e, f"Failed to connect to {MYSQL_HOST}:{MYSQL_DB} (attempt {self.connection_attempts})")
-                self._close_connection()
-                
-                # Exponential backoff for retries
+                self.connection_attempts += 1
+                log_critical_error("db", e, f"Failed to create connection pool (attempt {self.connection_attempts})")
                 if self.connection_attempts < self.max_retries:
-                    wait_time = min(2 ** self.connection_attempts, 30)  # Max 30 seconds
-                    logger.warning(f"⏳ Retrying database connection in {wait_time} seconds...")
-                    time.sleep(wait_time)
-                    return self.connect()
+                    time.sleep(5)
                 else:
-                    logger.error("💥 Database connection failed after max retries")
-                    
+                    logger.error("💥 Could not establish database connection after multiple retries.")
+                    self.pool = None
             except Exception as e:
-                log_critical_error("db", e, "Unexpected database connection error")
-                self._close_connection()
+                log_critical_error("db", e, "Unexpected error creating connection pool")
+                self.pool = None
+                break
+
+    def get_connection(self):
+        """Get a connection from the pool"""
+        if not self.pool:
+            logger.error("❌ Connection pool is not available.")
+            # Try to reconnect
+            self.connect()
+            if not self.pool:
+                raise Exception("Database connection pool is unavailable.")
+        
+        try:
+            return self.pool.get_connection()
+        except mysql.connector.Error as e:
+            log_critical_error("db", e, "Failed to get connection from pool")
+            # If pool is broken, try to re-establish it
+            self.connect()
+            if self.pool:
+                return self.pool.get_connection()
+            raise e
 
     def _create_tables(self):
         """Create database tables with error handling"""
-        if not self.connection:
-            return
-            
-        cursor = None
+        conn = None
         try:
-            cursor = self.connection.cursor(buffered=True)
-            
-            # Sensor data table
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS sensor_data (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    device_id VARCHAR(50) NOT NULL,
-                    payload JSON NOT NULL,
-                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    INDEX idx_device_time (device_id, timestamp)
-                )
-            """)
-            
-            # Device overrides table
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS device_overrides (
-                    device_id VARCHAR(50) PRIMARY KEY,
-                    status VARCHAR(10) NOT NULL,
-                    override_type VARCHAR(20) NOT NULL,
-                    expires_at TIMESTAMP NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            # Energy stats table
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS energy_stats (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    total_decisions INT DEFAULT 0,
-                    energy_saved DECIMAL(10,3) DEFAULT 0.000,
-                    ambient_overrides INT DEFAULT 0,
-                    optimization_events INT DEFAULT 0,
-                    baseline_energy DECIMAL(10,3) DEFAULT 0.000,
-                    ml_energy DECIMAL(10,3) DEFAULT 0.000,
-                    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            # Ensure there's always one row for energy stats
-            cursor.execute("""
-                INSERT IGNORE INTO energy_stats (id, total_decisions, energy_saved, ambient_overrides, optimization_events, baseline_energy, ml_energy) 
-                VALUES (1, 0, 0.000, 0, 0, 0.000, 0.000)
-            """)
-            
-            # Since autocommit=True, no need for explicit commit
-            logger.info("📊 Database tables created/verified successfully")
-            
+            conn = self.get_connection()
+            with conn.cursor() as cursor:
+                # Sensor data table
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS sensor_data (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        device_id VARCHAR(50) NOT NULL,
+                        payload JSON NOT NULL,
+                        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        INDEX idx_device_time (device_id, timestamp)
+                    )
+                """)
+                
+                # Device overrides table
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS device_overrides (
+                        device_id VARCHAR(50) PRIMARY KEY,
+                        status VARCHAR(10) NOT NULL,
+                        override_type VARCHAR(20) NOT NULL,
+                        expires_at TIMESTAMP NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                
+                # Energy stats table
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS energy_stats (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        total_decisions INT DEFAULT 0,
+                        energy_saved DECIMAL(10,3) DEFAULT 0.000,
+                        ambient_overrides INT DEFAULT 0,
+                        optimization_events INT DEFAULT 0,
+                        baseline_energy DECIMAL(10,3) DEFAULT 0.000,
+                        ml_energy DECIMAL(10,3) DEFAULT 0.000,
+                        last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                
+                # Ensure there's always one row for energy stats
+                cursor.execute("""
+                    INSERT IGNORE INTO energy_stats (id, total_decisions, energy_saved, ambient_overrides, optimization_events, baseline_energy, ml_energy) 
+                    VALUES (1, 0, 0.000, 0, 0, 0.000, 0.000)
+                """)
+                
+                logger.info("📊 Database tables created/verified successfully")
         except mysql.connector.Error as e:
             log_critical_error("db", e, "Failed to create database tables")
-            # Reset connection on table creation failure to prevent corruption
-            self._close_connection()
         except Exception as e:
             log_critical_error("db", e, "Unexpected error creating database tables")
-            # Reset connection on any error to prevent memory corruption
-            self._close_connection()
         finally:
-            # Always ensure cursor is properly closed
-            if cursor:
-                try:
-                    cursor.close()
-                except:
-                    pass  # Ignore cursor close errors
+            if conn and conn.is_connected():
+                conn.close()
 
     def store_sensor_data(self, device_id: str, payload: dict):
-        """Store sensor data in database with automatic reconnection"""
-        if not self.ensure_connection():
-            logger.warning("📊 Cannot store sensor data - database connection unavailable after reconnection attempts")
-            return
-        
-        retry_count = 0
-        max_retries = 2
-        
-        while retry_count <= max_retries:
-            cursor = None
-            try:
-                # Double-check connection before use
-                if not self.connection or not self.connection.is_connected():
-                    logger.warning(f"📊 Connection lost before storing data for {device_id}")
-                    if not self.ensure_connection():
-                        return
-                
-                cursor = self.connection.cursor(buffered=True)
+        """Store sensor data in database using a connection from the pool"""
+        conn = None
+        try:
+            conn = self.get_connection()
+            with conn.cursor() as cursor:
                 cursor.execute(
                     "INSERT INTO sensor_data (device_id, payload) VALUES (%s, %s)",
                     (device_id, json.dumps(payload))
                 )
-                # No need for explicit commit since autocommit=True
-                logger.debug(f"📝 Stored sensor data for {device_id}")
-                return  # Success
-                
-            except mysql.connector.OperationalError as e:
-                # Connection lost during operation
-                if e.errno in [2013, 2006]:  # Lost connection, MySQL server has gone away
-                    log_critical_error("db", e, f"Connection lost while storing data for {device_id} (attempt {retry_count + 1})")
-                    self._close_connection()
-                    
-                    if retry_count < max_retries:
-                        retry_count += 1
-                        logger.info(f"🔄 Retrying database operation for {device_id} (attempt {retry_count + 1})")
-                        if self.ensure_connection():
-                            continue  # Retry
-                    
-                    logger.error(f"💥 Failed to store sensor data for {device_id} after {max_retries + 1} attempts")
-                    return
-                else:
-                    log_critical_error("db", e, f"Database operational error for {device_id}")
-                    return
-                    
-            except mysql.connector.Error as e:
-                log_critical_error("db", e, f"Database error storing data for {device_id}")
-                return
-                
-            except Exception as e:
-                log_critical_error("db", e, f"Unexpected error storing sensor data for {device_id}")
-                return
-            finally:
-                # Always close cursor
-                if cursor:
-                    try:
-                        cursor.close()
-                    except:
-                        pass
+            logger.debug(f"📝 Stored sensor data for {device_id}")
+        except mysql.connector.Error as e:
+            log_critical_error("db", e, f"Database error storing data for {device_id}")
+        except Exception as e:
+            log_critical_error("db", e, f"Unexpected error storing sensor data for {device_id}")
+        finally:
+            if conn and conn.is_connected():
+                conn.close()
 
     def get_recent_data(self, hours: int = 24) -> List[dict]:
-        """Get recent sensor data with automatic reconnection"""
-        if not self.ensure_connection():
-            logger.warning("📊 Cannot retrieve sensor data - database connection unavailable")
-            return []
-        
-        retry_count = 0
-        max_retries = 2
-        
-        while retry_count <= max_retries:
-            cursor = None
-            try:
-                # Double-check connection before use
-                if not self.connection or not self.connection.is_connected():
-                    logger.warning("📊 Connection lost before retrieving data")
-                    if not self.ensure_connection():
-                        return []
-                
-                cursor = self.connection.cursor(buffered=True)
+        """Get recent sensor data using a connection from the pool"""
+        conn = None
+        try:
+            conn = self.get_connection()
+            with conn.cursor(dictionary=True) as cursor:
                 cursor.execute("""
                     SELECT device_id, payload, timestamp 
                     FROM sensor_data 
@@ -359,113 +250,66 @@ class DatabaseManager:
                     ORDER BY timestamp DESC
                 """, (hours,))
                 
-                results = []
-                for row in cursor.fetchall():
-                    device_id, payload_str, timestamp = row
-                    try:
-                        payload = json.loads(str(payload_str))  # Ensure it's a string
-                        results.append({
-                            'device_id': device_id,
-                            'payload': payload,
-                            'timestamp': str(timestamp)
-                        })
-                    except json.JSONDecodeError:
-                        logger.warning(f"⚠️ Invalid JSON in sensor data for {device_id}")
-                        continue
-                
+                results = cursor.fetchall()
+                # Manually convert payload from string to dict if needed
+                for row in results:
+                    if isinstance(row['payload'], str):
+                        row['payload'] = json.loads(row['payload'])
                 return results
-                
-            except mysql.connector.OperationalError as e:
-                # Connection lost during operation
-                if e.errno in [2013, 2006]:  # Lost connection, MySQL server has gone away
-                    log_critical_error("db", e, f"Connection lost while retrieving data (attempt {retry_count + 1})")
-                    self._close_connection()
-                    
-                    if retry_count < max_retries:
-                        retry_count += 1
-                        logger.info(f"🔄 Retrying database query (attempt {retry_count + 1})")
-                        if self.ensure_connection():
-                            continue  # Retry
-                    
-                    logger.error(f"💥 Failed to retrieve sensor data after {max_retries + 1} attempts")
-                    return []
-                else:
-                    log_critical_error("db", e, "Database operational error during data retrieval")
-                    return []
-                    
-            except mysql.connector.Error as e:
-                log_critical_error("db", e, "Database error during data retrieval")
-                return []
-                
-            except Exception as e:
-                log_critical_error("db", e, "Unexpected error during data retrieval")
-                return []
-            finally:
-                # Always close cursor
-                if cursor:
-                    try:
-                        cursor.close()
-                    except:
-                        pass
-        
-        return []  # Return empty list if all retries failed
+        except mysql.connector.Error as e:
+            log_critical_error("db", e, "Database error during data retrieval")
+            return []
+        except Exception as e:
+            log_critical_error("db", e, "Unexpected error during data retrieval")
+            return []
+        finally:
+            if conn and conn.is_connected():
+                conn.close()
 
     def save_override(self, device_id: str, status: str, override_type: str, expires_at: Optional[datetime] = None):
         """Save device override to database"""
-        if not self.ensure_connection():
-            logger.warning("📊 Cannot save override - database connection unavailable")
-            return
-        
-        cursor = None
+        conn = None
         try:
-            cursor = self.connection.cursor(buffered=True)
-            cursor.execute("""
-                INSERT INTO device_overrides (device_id, status, override_type, expires_at)
-                VALUES (%s, %s, %s, %s)
-                ON DUPLICATE KEY UPDATE
-                status = VALUES(status),
-                override_type = VALUES(override_type),
-                expires_at = VALUES(expires_at),
-                created_at = CURRENT_TIMESTAMP
-            """, (device_id, status, override_type, expires_at))
-            # No need for explicit commit since autocommit=True
+            conn = self.get_connection()
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    INSERT INTO device_overrides (device_id, status, override_type, expires_at)
+                    VALUES (%s, %s, %s, %s)
+                    ON DUPLICATE KEY UPDATE
+                    status = VALUES(status),
+                    override_type = VALUES(override_type),
+                    expires_at = VALUES(expires_at),
+                    created_at = CURRENT_TIMESTAMP
+                """, (device_id, status, override_type, expires_at))
             print(f"💾 Override saved to database: {device_id} = {status}")
         except mysql.connector.Error as e:
             print(f"❌ Override save error: {e}")
         except Exception as e:
             log_critical_error("db", e, f"Unexpected error saving override for {device_id}")
         finally:
-            if cursor:
-                try:
-                    cursor.close()
-                except:
-                    pass
+            if conn and conn.is_connected():
+                conn.close()
 
     def load_overrides(self):
         """Load active overrides from database"""
-        if not self.ensure_connection():
-            logger.warning("📊 Cannot load overrides - database connection unavailable")
-            return {}
-        
-        cursor = None
+        conn = None
         try:
-            cursor = self.connection.cursor(buffered=True)
-            cursor.execute("""
-                SELECT device_id, status, override_type, expires_at
-                FROM device_overrides
-                WHERE expires_at IS NULL OR expires_at > NOW()
-            """)
-            
-            overrides = {}
-            for row in cursor.fetchall():
-                device_id, status, override_type, expires_at = row
-                overrides[device_id] = {
-                    'status': status,
-                    'type': override_type,
-                    'expires_at': expires_at
-                }
-            
-            return overrides
+            conn = self.get_connection()
+            with conn.cursor(dictionary=True) as cursor:
+                cursor.execute("""
+                    SELECT device_id, status, override_type, expires_at
+                    FROM device_overrides
+                    WHERE expires_at IS NULL OR expires_at > NOW()
+                """)
+                
+                overrides = {}
+                for row in cursor.fetchall():
+                    overrides[row['device_id']] = {
+                        'status': row['status'],
+                        'type': row['override_type'],
+                        'expires_at': row['expires_at']
+                    }
+                return overrides
         except mysql.connector.Error as e:
             print(f"❌ Override load error: {e}")
             return {}
@@ -473,29 +317,17 @@ class DatabaseManager:
             log_critical_error("db", e, "Unexpected error loading overrides")
             return {}
         finally:
-            if cursor:
-                try:
-                    cursor.close()
-                except:
-                    pass
+            if conn and conn.is_connected():
+                conn.close()
 
     def get_energy_stats(self):
         """Get current energy statistics from database"""
-        # Attempt reconnection if database is down
-        if not self.ensure_connection():
-            print("❌ Cannot get energy stats - database unavailable")
-            return {
-                "total_decisions": 0,
-                "energy_saved": 0.0,
-                "ambient_overrides": 0,
-                "optimization_events": 0
-            }
-        
-        cursor = None
+        conn = None
         try:
-            cursor = self.connection.cursor(buffered=True)
-            cursor.execute("SELECT total_decisions, energy_saved, ambient_overrides, optimization_events FROM energy_stats WHERE id = 1")
-            row = cursor.fetchone()
+            conn = self.get_connection()
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT total_decisions, energy_saved, ambient_overrides, optimization_events FROM energy_stats WHERE id = 1")
+                row = cursor.fetchone()
             
             if row:
                 return {
@@ -504,145 +336,92 @@ class DatabaseManager:
                     "ambient_overrides": int(row[2]),
                     "optimization_events": int(row[3])
                 }
-            else:
-                return {
-                    "total_decisions": 0,
-                    "energy_saved": 0.0,
-                    "ambient_overrides": 0,
-                    "optimization_events": 0
-                }
         except mysql.connector.Error as e:
             print(f"❌ Energy stats get error: {e}")
-            self._close_connection()  # Reset connection on error
-            return {
-                "total_decisions": 0,
-                "energy_saved": 0.0,
-                "ambient_overrides": 0,
-                "optimization_events": 0
-            }
         except Exception as e:
             log_critical_error("db", e, "Unexpected error getting energy stats")
-            return {
-                "total_decisions": 0,
-                "energy_saved": 0.0,
-                "ambient_overrides": 0,
-                "optimization_events": 0
-            }
         finally:
-            if cursor:
-                try:
-                    cursor.close()
-                except:
-                    pass
+            if conn and conn.is_connected():
+                conn.close()
+        
+        # Fallback if anything goes wrong
+        return {
+            "total_decisions": 0, "energy_saved": 0.0,
+            "ambient_overrides": 0, "optimization_events": 0
+        }
 
     def update_energy_stats(self, total_decisions=None, energy_saved=None, ambient_overrides=None, optimization_events=None, baseline_energy=None, ml_energy=None):
         """Update energy statistics in database"""
-        if not self.ensure_connection():
-            logger.warning("📊 Cannot update energy stats - database connection unavailable")
-            return
-        
-        cursor = None
+        conn = None
         try:
-            # Build dynamic update query based on provided parameters
             updates = []
             values = []
             
-            if total_decisions is not None:
-                updates.append("total_decisions = %s")
-                values.append(total_decisions)
-            if energy_saved is not None:
-                updates.append("energy_saved = %s")
-                values.append(energy_saved)
-            if ambient_overrides is not None:
-                updates.append("ambient_overrides = %s")
-                values.append(ambient_overrides)
-            if optimization_events is not None:
-                updates.append("optimization_events = %s")
-                values.append(optimization_events)
-            if baseline_energy is not None:
-                updates.append("baseline_energy = %s")
-                values.append(baseline_energy)
-            if ml_energy is not None:
-                updates.append("ml_energy = %s")
-                values.append(ml_energy)
+            if total_decisions is not None: updates.append("total_decisions = %s"); values.append(total_decisions)
+            if energy_saved is not None: updates.append("energy_saved = %s"); values.append(energy_saved)
+            if ambient_overrides is not None: updates.append("ambient_overrides = %s"); values.append(ambient_overrides)
+            if optimization_events is not None: updates.append("optimization_events = %s"); values.append(optimization_events)
+            if baseline_energy is not None: updates.append("baseline_energy = %s"); values.append(baseline_energy)
+            if ml_energy is not None: updates.append("ml_energy = %s"); values.append(ml_energy)
             
             if updates:
-                query = f"UPDATE energy_stats SET {', '.join(updates)} WHERE id = 1"
-                cursor = self.connection.cursor(buffered=True)
-                cursor.execute(query, values)
-                # No need for explicit commit since autocommit=True
-                
+                conn = self.get_connection()
+                with conn.cursor() as cursor:
+                    query = f"UPDATE energy_stats SET {', '.join(updates)} WHERE id = 1"
+                    cursor.execute(query, values)
         except mysql.connector.Error as e:
             print(f"❌ Energy stats update error: {e}")
         except Exception as e:
             log_critical_error("db", e, "Unexpected error updating energy stats")
         finally:
-            if cursor:
-                try:
-                    cursor.close()
-                except:
-                    pass
+            if conn and conn.is_connected():
+                conn.close()
 
     def increment_energy_stats(self, total_decisions=0, energy_saved=0.0, ambient_overrides=0, optimization_events=0, baseline_energy=0.0, ml_energy=0.0):
         """Increment energy statistics in database"""
-        # Attempt reconnection if database is down
-        if not self.ensure_connection():
-            print("❌ Cannot increment energy stats - database unavailable")
-            return
-        
-        cursor = None
+        conn = None
         try:
-            cursor = self.connection.cursor(buffered=True)
-            cursor.execute("""
-                UPDATE energy_stats SET 
-                    total_decisions = total_decisions + %s,
-                    energy_saved = energy_saved + %s,
-                    ambient_overrides = ambient_overrides + %s,
-                    optimization_events = optimization_events + %s,
-                    baseline_energy = baseline_energy + %s,
-                    ml_energy = ml_energy + %s
-                WHERE id = 1
-            """, (total_decisions, energy_saved, ambient_overrides, optimization_events, baseline_energy, ml_energy))
-            # No need for explicit commit since autocommit=True
+            conn = self.get_connection()
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    UPDATE energy_stats SET 
+                        total_decisions = total_decisions + %s,
+                        energy_saved = energy_saved + %s,
+                        ambient_overrides = ambient_overrides + %s,
+                        optimization_events = optimization_events + %s,
+                        baseline_energy = baseline_energy + %s,
+                        ml_energy = ml_energy + %s
+                    WHERE id = 1
+                """, (total_decisions, energy_saved, ambient_overrides, optimization_events, baseline_energy, ml_energy))
             
-            # Debug logging for successful increments
             if total_decisions > 0 or energy_saved > 0 or ambient_overrides > 0 or optimization_events > 0:
                 print(f"📊 Stats updated: decisions+{total_decisions}, energy_saved+{energy_saved:.3f}kWh, ambient+{ambient_overrides}, events+{optimization_events}")
-                
         except mysql.connector.Error as e:
             print(f"❌ Energy stats increment error: {e}")
-            self._close_connection()  # Reset connection on error
         except Exception as e:
             log_critical_error("db", e, "Unexpected error incrementing energy stats")
         finally:
-            if cursor:
-                try:
-                    cursor.close()
-                except:
-                    pass
+            if conn and conn.is_connected():
+                conn.close()
 
-# Initialize database with health monitoring
-db = DatabaseManager()
-
-def database_health_monitor():
-    """Background thread to monitor database connection health"""
-    import time
-    while True:
+    def delete_override(self, device_id: str):
+        """Delete a device override from the database"""
+        conn = None
         try:
-            time.sleep(30)  # Check every 30 seconds
-            if not db.is_connected():
-                logger.warning("🏥 Database health check failed, attempting reconnection...")
-                db.ensure_connection()
-            else:
-                logger.debug("💚 Database health check passed")
+            conn = self.get_connection()
+            with conn.cursor() as cursor:
+                cursor.execute("DELETE FROM device_overrides WHERE device_id = %s", (device_id,))
+            print(f"💾 Override deleted from database: {device_id}")
+        except mysql.connector.Error as e:
+            print(f"❌ Override deletion error: {e}")
         except Exception as e:
-            log_critical_error("db", e, "Database health monitor error")
-            time.sleep(60)  # Wait longer on error
+            log_critical_error("db", e, f"Unexpected error deleting override for {device_id}")
+        finally:
+            if conn and conn.is_connected():
+                conn.close()
 
-# Start database health monitoring thread
-db_health_thread = threading.Thread(target=database_health_monitor, daemon=True)
-db_health_thread.start()
-logger.info("🏥 Database health monitoring started")
+# Initialize database with connection pooling
+db = DatabaseManager()
 
 def load_ml_model():
     """Load trained ML model and parameters"""
@@ -924,13 +703,7 @@ def check_device_override(device_id: str) -> Optional[str]:
         # Remove expired override
         del device_overrides[device_id]
         # Remove from database
-        if db.connection:
-            try:
-                cursor = db.connection.cursor()
-                cursor.execute("DELETE FROM device_overrides WHERE device_id = %s", (device_id,))
-                cursor.close()
-            except mysql.connector.Error:
-                pass
+        db.delete_override(device_id)
         return None
     
     return override['status']
@@ -950,16 +723,8 @@ def set_device_override(device_id: str, status: str, override_type: str = "24h")
         # Remove override
         if device_id in device_overrides:
             del device_overrides[device_id]
-        if db.connection:
-            try:
-                cursor = db.connection.cursor()
-                cursor.execute("DELETE FROM device_overrides WHERE device_id = %s", (device_id,))
-                db.connection.commit()  # Commit the deletion
-                cursor.close()
-                print(f"💾 Override deleted from database: {device_id}")
-            except mysql.connector.Error as e:
-                print(f"❌ Override deletion error: {e}")
-                db.connection.rollback()
+        
+        db.delete_override(device_id)
         
         # Notify virtual nodes that override is disabled
         override_topic = f"devices/{device_id}/override"
@@ -1152,14 +917,24 @@ print(f"📋 Loaded {len(device_overrides)} existing overrides")
 def health_check():
     """Health check endpoint for monitoring"""
     try:
+        # Check if the pool is initialized
+        db_status = 'disconnected'
+        if db.pool:
+            try:
+                # Try to get a connection to check pool health
+                conn = db.pool.get_connection()
+                db_status = 'connected'
+                conn.close()
+            except mysql.connector.Error:
+                db_status = 'disconnected'
+
         health_status = {
             'status': 'healthy',
             'timestamp': datetime.now().isoformat(),
             'components': {
-                'database': 'connected' if db.connection else 'disconnected',
+                'database': db_status,
                 'ml_model': 'loaded' if trained_model else 'rule_based_fallback',
-                'mqtt': 'running',  # If we're responding, MQTT thread is likely running
-                'api': 'running'
+                'mqtt': 'running',                'api': 'running'
             },
             'error_counts': critical_ops,
             'uptime_info': {
@@ -1173,7 +948,7 @@ def health_check():
         if critical_ops.get("db_errors", 0) > 10 or critical_ops.get("mqtt_errors", 0) > 10:
             health_status['status'] = 'degraded'
         
-        if not db.connection:
+        if db_status == 'disconnected':
             health_status['status'] = 'unhealthy'
             
         return jsonify(health_status)
@@ -1428,23 +1203,21 @@ def start_mqtt_client():
             retry_count += 1
             log_critical_error("mqtt", e, f"MQTT connection refused (attempt {retry_count})")
             if retry_count < max_retries:
-                wait_time = min(2 ** retry_count, 60)  # Exponential backoff, max 60 seconds
-                logger.warning(f"⏳ Retrying MQTT connection in {wait_time} seconds...")
-                time.sleep(wait_time)
+                logger.info(f"⏳ Retrying MQTT connection in 5 seconds...")
+                time.sleep(5)
             else:
-                logger.error("💥 MQTT connection failed after max retries")
-                break
+                logger.error("💥 MQTT connection failed after multiple retries. Exiting MQTT thread.")
+                break # Exit loop
                 
         except Exception as e:
             retry_count += 1
             log_critical_error("mqtt", e, f"MQTT client error (attempt {retry_count})")
             if retry_count < max_retries:
-                wait_time = min(2 ** retry_count, 60)
-                logger.warning(f"⏳ Retrying MQTT connection in {wait_time} seconds...")
-                time.sleep(wait_time)
+                logger.info(f"⏳ Retrying MQTT connection in 5 seconds...")
+                time.sleep(5)
             else:
-                logger.error("💥 MQTT client failed after max retries")
-                break
+                logger.error("💥 MQTT client error after multiple retries. Exiting MQTT thread.")
+                break # Exit loop
 
 # Add Flask error handlers
 @app.errorhandler(404)
@@ -1471,9 +1244,10 @@ if __name__ == "__main__":
         logger.info(f"🗄️ Database: {MYSQL_HOST}/{MYSQL_DB}")
         logger.info(f"📊 Critical operations monitoring enabled")
         
-        # Test database connection on startup
-        if not db.connection:
-            logger.error("💥 STARTUP FAILED: Database connection unavailable")
+        # The DatabaseManager now handles connection retries internally.
+        # We just need to check if the pool was successfully created.
+        if not db.pool:
+            logger.error("💥 STARTUP FAILED: Database connection pool unavailable.")
             sys.exit(1)
         
         # Start MQTT client in background thread

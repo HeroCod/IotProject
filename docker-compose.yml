@@ -27,14 +27,21 @@ services:
       - db_data:/var/lib/mysql
     networks:
       - iot-network
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u root -p$${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   # IoT Controller Backend (with REST API)
   controller:
     build: ./controller
     container_name: iot_controller
     depends_on:
-      - mosquitto
-      - mysql
+      mosquitto:
+        condition: service_started
+      mysql:
+        condition: service_healthy
     volumes:
       - ./ml:/app/ml:ro  # Mount ML parameters as read-only
     environment:
