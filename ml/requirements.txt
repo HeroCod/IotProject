@@ -1,0 +1,28 @@
+# ML Training Environment Requirements
+# Compatible with IoT Controller deployment (scikit-learn 1.4.0)
+
+# Core ML libraries
+scikit-learn==1.4.0
+numpy>=1.21.0,<2.0.0
+pandas>=1.3.0
+joblib>=1.0.0
+
+# Data visualization
+matplotlib>=3.5.0
+seaborn>=0.11.0
+
+# Jupyter environment
+jupyter>=1.0.0
+ipykernel>=6.0.0
+
+# Data processing
+scipy>=1.7.0
+
+# Progress bars and utilities
+tqdm>=4.60.0
+
+# Optional: For dataset downloading
+kaggle>=1.5.0
+
+# Note: This configuration ensures the trained model will be compatible
+# with the controller environment which uses scikit-learn 1.4.0

@@ -66,6 +66,24 @@ services:
       - iot-network
     restart: unless-stopped
 
+  # Virtual IoT Nodes (simulation)
+  virtual-nodes:
+    build: ./virtual_nodes
+    container_name: iot_virtual_nodes
+    depends_on:
+      - mosquitto
+      - controller
+    environment:
+      MQTT_BROKER: mosquitto
+      MQTT_PORT: 1883
+      DOCKER_CONTAINER: "true"
+    networks:
+      - iot-network
+    restart: unless-stopped
+    labels:
+      - "iot.service=virtual-nodes"
+      - "iot.description=Simulated IoT sensor nodes"
+
   # CLI Tool (for debugging/testing)
   cli:
     build: ./cli

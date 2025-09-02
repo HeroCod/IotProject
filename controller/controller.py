@@ -15,10 +15,15 @@ import os
 import json
 import threading
 import time
+import warnings
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 from flask import Flask, jsonify, request
 import paho.mqtt.client as mqtt
+import paho.mqtt.publish as publish
+import mysql.connector
+import joblib
+import pandas as pd
 import numpy as np
 import pandas as pd
 import joblib
@@ -39,12 +44,6 @@ app = Flask(__name__)
 
 # Global state management
 device_overrides = {}  # {device_id: {status, expires_at, type}}
-energy_stats = {
-    "total_decisions": 0,
-    "energy_saved": 0.0,
-    "ambient_overrides": 0,
-    "optimization_events": 0
-}
 latest_sensor_data = {}  # {device_id: latest_data}
 last_device_states = {}  # {device_id: last_led_command} - Track actual state changes
 
@@ -85,6 +84,27 @@ class DatabaseManager:
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS energy_stats (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    total_decisions INT DEFAULT 0,
+                    energy_saved DECIMAL(10,3) DEFAULT 0.000,
+                    ambient_overrides INT DEFAULT 0,
+                    optimization_events INT DEFAULT 0,
+                    baseline_energy DECIMAL(10,3) DEFAULT 0.000,
+                    ml_energy DECIMAL(10,3) DEFAULT 0.000,
+                    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            # Ensure there's always one row for energy stats
+            cursor.execute("""
+                INSERT IGNORE INTO energy_stats (id, total_decisions, energy_saved, ambient_overrides, optimization_events, baseline_energy, ml_energy) 
+                VALUES (1, 0, 0.000, 0, 0, 0.000, 0.000)
+            """)
+            
             cursor.close()
             print("✅ Database connected and tables initialized")
             
@@ -191,6 +211,123 @@ class DatabaseManager:
             print(f"❌ Override load error: {e}")
             return {}
 
+    def get_energy_stats(self):
+        """Get current energy statistics from database"""
+        # Attempt reconnection if database is down
+        if not self.connection:
+            print("🔄 Database connection lost, attempting reconnection...")
+            self.connect()
+            
+        if not self.connection:
+            print("❌ Cannot get energy stats - database unavailable")
+            return {
+                "total_decisions": 0,
+                "energy_saved": 0.0,
+                "ambient_overrides": 0,
+                "optimization_events": 0
+            }
+        
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute("SELECT total_decisions, energy_saved, ambient_overrides, optimization_events FROM energy_stats WHERE id = 1")
+            row = cursor.fetchone()
+            cursor.close()
+            
+            if row:
+                return {
+                    "total_decisions": row[0],
+                    "energy_saved": float(row[1]),
+                    "ambient_overrides": row[2],
+                    "optimization_events": row[3]
+                }
+            else:
+                return {
+                    "total_decisions": 0,
+                    "energy_saved": 0.0,
+                    "ambient_overrides": 0,
+                    "optimization_events": 0
+                }
+        except mysql.connector.Error as e:
+            print(f"❌ Energy stats get error: {e}")
+            self.connection = None  # Reset connection on error
+            return {
+                "total_decisions": 0,
+                "energy_saved": 0.0,
+                "ambient_overrides": 0,
+                "optimization_events": 0
+            }
+
+    def update_energy_stats(self, total_decisions=None, energy_saved=None, ambient_overrides=None, optimization_events=None, baseline_energy=None, ml_energy=None):
+        """Update energy statistics in database"""
+        if not self.connection:
+            return
+        
+        try:
+            # Build dynamic update query based on provided parameters
+            updates = []
+            values = []
+            
+            if total_decisions is not None:
+                updates.append("total_decisions = %s")
+                values.append(total_decisions)
+            if energy_saved is not None:
+                updates.append("energy_saved = %s")
+                values.append(energy_saved)
+            if ambient_overrides is not None:
+                updates.append("ambient_overrides = %s")
+                values.append(ambient_overrides)
+            if optimization_events is not None:
+                updates.append("optimization_events = %s")
+                values.append(optimization_events)
+            if baseline_energy is not None:
+                updates.append("baseline_energy = %s")
+                values.append(baseline_energy)
+            if ml_energy is not None:
+                updates.append("ml_energy = %s")
+                values.append(ml_energy)
+            
+            if updates:
+                query = f"UPDATE energy_stats SET {', '.join(updates)} WHERE id = 1"
+                cursor = self.connection.cursor()
+                cursor.execute(query, values)
+                cursor.close()
+                
+        except mysql.connector.Error as e:
+            print(f"❌ Energy stats update error: {e}")
+
+    def increment_energy_stats(self, total_decisions=0, energy_saved=0.0, ambient_overrides=0, optimization_events=0, baseline_energy=0.0, ml_energy=0.0):
+        """Increment energy statistics in database"""
+        # Attempt reconnection if database is down
+        if not self.connection:
+            print("🔄 Database connection lost, attempting reconnection...")
+            self.connect()
+            
+        if not self.connection:
+            print("❌ Cannot increment energy stats - database unavailable")
+            return
+        
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute("""
+                UPDATE energy_stats SET 
+                    total_decisions = total_decisions + %s,
+                    energy_saved = energy_saved + %s,
+                    ambient_overrides = ambient_overrides + %s,
+                    optimization_events = optimization_events + %s,
+                    baseline_energy = baseline_energy + %s,
+                    ml_energy = ml_energy + %s
+                WHERE id = 1
+            """, (total_decisions, energy_saved, ambient_overrides, optimization_events, baseline_energy, ml_energy))
+            cursor.close()
+            
+            # Debug logging for successful increments
+            if total_decisions > 0 or energy_saved > 0 or ambient_overrides > 0 or optimization_events > 0:
+                print(f"📊 Stats updated: decisions+{total_decisions}, energy_saved+{energy_saved:.3f}kWh, ambient+{ambient_overrides}, events+{optimization_events}")
+                
+        except mysql.connector.Error as e:
+            print(f"❌ Energy stats increment error: {e}")
+            self.connection = None  # Reset connection on error
+
 # Initialize database
 db = DatabaseManager()
 
@@ -215,7 +352,14 @@ def load_ml_model():
             print(f"❌ Import error loading model: {e}")
         model = None
     except Exception as e:
-        print(f"❌ Unexpected error loading model: {e}")
+        # Catch version compatibility issues that can cause segfaults
+        error_msg = str(e).lower()
+        if 'version' in error_msg or 'unpickle' in error_msg or 'incompatible' in error_msg:
+            print(f"❌ Model version compatibility error: {e}")
+            print("⚠️ Model was trained with incompatible scikit-learn version")
+            print("⚠️ Please retrain model or update scikit-learn version")
+        else:
+            print(f"❌ Unexpected error loading model: {e}")
         print("⚠️ Using rule-based fallback")
         model = None
     
@@ -561,19 +705,18 @@ def process_sensor_data(device_id: str, payload: dict):
     
     if ambient_triggered:
         energy_saved += ambient_energy
-        energy_stats["ambient_overrides"] += 1
+        db.increment_energy_stats(ambient_overrides=1)
         reason += "_ambient_sufficient"
     
     # Only update stats if LED command actually changed
     last_command = last_device_states.get(device_id)
     if last_command != led_command:
         # Update global stats only on actual state change
-        energy_stats["total_decisions"] += 1
-        energy_stats["energy_saved"] += energy_saved
+        db.increment_energy_stats(total_decisions=1, energy_saved=energy_saved)
         
         # Increment ML optimizations counter when ML model is used
         if trained_model and 'ml_prediction' in reason:
-            energy_stats["optimization_events"] += 1
+            db.increment_energy_stats(optimization_events=1)
         
         last_device_states[device_id] = led_command
         
@@ -629,7 +772,7 @@ def get_status():
     """Get system status"""
     return jsonify({
         'status': 'running',
-        'energy_stats': energy_stats,
+        'energy_stats': db.get_energy_stats(),
         'active_overrides': len(device_overrides),
         'latest_data_count': len(latest_sensor_data),
         'timestamp': datetime.now().isoformat()
@@ -693,7 +836,7 @@ def get_sensor_data():
 @app.route('/api/energy-stats', methods=['GET'])
 def get_energy_stats():
     """Get energy optimization statistics"""
-    return jsonify(energy_stats)
+    return jsonify(db.get_energy_stats())
 
 @app.route('/api/baseline-comparison', methods=['GET'])
 def get_baseline_comparison():
@@ -710,19 +853,22 @@ def get_baseline_comparison():
     
     # Calculate efficiency metrics
     efficiency_improvement = 0.0
+    # Get current energy stats from database
+    current_energy_stats = db.get_energy_stats()
+    
     if total_baseline_energy > 0:
-        efficiency_improvement = (energy_stats['energy_saved'] / total_baseline_energy) * 100
+        efficiency_improvement = (current_energy_stats['energy_saved'] / total_baseline_energy) * 100
     
     comparison_stats = {
         'baseline_assumption': 'Lights always ON when room is occupied (150W per room)',
         'current_baseline_consumption_kw': total_baseline_energy,
         'rooms_currently_occupied': total_rooms_occupied,
-        'ml_energy_saved_vs_baseline_kwh': energy_stats['energy_saved'],
+        'ml_energy_saved_vs_baseline_kwh': current_energy_stats['energy_saved'],
         'efficiency_improvement_percent': round(efficiency_improvement, 1),
-        'total_ml_decisions': energy_stats['optimization_events'],
-        'total_system_decisions': energy_stats['total_decisions'],
+        'total_ml_decisions': current_energy_stats['optimization_events'],
+        'total_system_decisions': current_energy_stats['total_decisions'],
         'ml_model_active': trained_model is not None,
-        'energy_stats': energy_stats,
+        'energy_stats': current_energy_stats,
         'calculation_timestamp': datetime.now().isoformat()
     }
     

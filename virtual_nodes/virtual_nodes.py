@@ -16,6 +16,7 @@ import time
 import random
 import threading
 import math
+import os
 from datetime import datetime, timedelta
 import signal
 import sys
@@ -53,6 +54,16 @@ class VirtualIoTNode:
         self.last_occupancy = 0
         self.light_transition_time = 0  # Smooth light transitions
         self.auto_behavior_enabled = True
+        
+        # Enhanced occupancy simulation variables
+        self.random_event_active = False
+        self.random_event_duration = 0
+        self.random_event_type = None
+        self.special_day_multiplier = 1.0
+        self.multi_person_event = False
+        self.multi_person_count = 1
+        self.work_from_home_mode = False
+        self.last_random_event_check = 0
         
         # State tracking for logging
         self.last_logged_state = {
@@ -441,6 +452,233 @@ class VirtualIoTNode:
         # Ensure within reasonable bounds
         return max(5, min(int(total_light), 120))
     
+    def check_for_random_events(self):
+        """Generate random occupancy events to create more interesting patterns"""
+        now = datetime.now()
+        current_time = now.hour * 60 + now.minute
+        
+        # Only check for new events every 5 minutes to avoid spam
+        if current_time - self.last_random_event_check < 5:
+            return
+        
+        self.last_random_event_check = current_time
+        
+        # If already in an event, count down duration
+        if self.random_event_active:
+            self.random_event_duration -= 5  # Decrease by 5 minutes
+            if self.random_event_duration <= 0:
+                self.random_event_active = False
+                self.random_event_type = None
+                self.multi_person_event = False
+                self.multi_person_count = 1
+                print(f"🎉 {self.node_id} ({self.location}): Random event ended")
+            return
+        
+        # Check for special day conditions
+        day_of_week = now.weekday()
+        is_weekend = day_of_week >= 5
+        is_friday_evening = (day_of_week == 4 and now.hour >= 18)
+        is_holiday_season = now.month in [11, 12, 1]  # Holiday months
+        
+        # Calculate base event probability (higher on weekends, evenings, holidays)
+        base_prob = 0.02  # 2% base chance every 5 minutes
+        
+        if is_weekend:
+            base_prob *= 2.5
+        if is_friday_evening:
+            base_prob *= 3.0
+        if is_holiday_season:
+            base_prob *= 1.5
+        if 18 <= now.hour <= 22:  # Evening hours
+            base_prob *= 2.0
+        
+        # Room-specific event modifiers
+        room_event_modifiers = {
+            'Living Room': 1.8,  # More social events
+            'Kitchen': 1.4,      # Cooking events, gatherings
+            'Bedroom': 0.6       # Fewer events, mostly personal
+        }
+        
+        room_modifier = room_event_modifiers.get(self.location, 1.0)
+        final_prob = base_prob * room_modifier
+        
+        # Roll for random event
+        if random.random() < final_prob:
+            self.trigger_random_event()
+    
+    def trigger_random_event(self):
+        """Trigger a specific type of random event"""
+        # Possible random events with different characteristics
+        events = {
+            'party_small': {
+                'duration': random.randint(120, 300),  # 2-5 hours
+                'multi_person': True,
+                'people_count': random.randint(2, 4),
+                'occupancy_boost': 0.8,
+                'description': 'small gathering'
+            },
+            'party_large': {
+                'duration': random.randint(180, 420),  # 3-7 hours
+                'multi_person': True,
+                'people_count': random.randint(4, 8),
+                'occupancy_boost': 0.9,
+                'description': 'large party'
+            },
+            'cooking_session': {
+                'duration': random.randint(60, 180),   # 1-3 hours
+                'multi_person': True,
+                'people_count': random.randint(2, 3),
+                'occupancy_boost': 0.7,
+                'description': 'cooking session'
+            },
+            'movie_night': {
+                'duration': random.randint(120, 240),  # 2-4 hours
+                'multi_person': True,
+                'people_count': random.randint(2, 5),
+                'occupancy_boost': 0.85,
+                'description': 'movie night'
+            },
+            'work_session': {
+                'duration': random.randint(120, 480),  # 2-8 hours
+                'multi_person': False,
+                'people_count': 1,
+                'occupancy_boost': 0.9,
+                'description': 'work-from-home session'
+            },
+            'cleaning_spree': {
+                'duration': random.randint(60, 120),   # 1-2 hours
+                'multi_person': False,
+                'people_count': 1,
+                'occupancy_boost': 0.95,
+                'description': 'cleaning activity'
+            },
+            'family_visit': {
+                'duration': random.randint(180, 360),  # 3-6 hours
+                'multi_person': True,
+                'people_count': random.randint(3, 6),
+                'occupancy_boost': 0.9,
+                'description': 'family visit'
+            },
+            'late_night_activity': {
+                'duration': random.randint(30, 120),   # 30min-2 hours
+                'multi_person': False,
+                'people_count': 1,
+                'occupancy_boost': 0.6,
+                'description': 'late night activity'
+            },
+            'morning_rush': {
+                'duration': random.randint(30, 90),    # 30-90 minutes
+                'multi_person': True,
+                'people_count': random.randint(2, 3),
+                'occupancy_boost': 0.95,
+                'description': 'morning rush'
+            },
+            'study_session': {
+                'duration': random.randint(120, 300),  # 2-5 hours
+                'multi_person': False,
+                'people_count': 1,
+                'occupancy_boost': 0.85,
+                'description': 'study session'
+            }
+        }
+        
+        # Filter events based on room type and time
+        now = datetime.now()
+        available_events = []
+        
+        for event_type, event_data in events.items():
+            # Room-specific filtering
+            if self.location == 'Kitchen' and event_type in ['cooking_session', 'family_visit', 'morning_rush']:
+                available_events.append(event_type)
+            elif self.location == 'Living Room' and event_type in ['party_small', 'party_large', 'movie_night', 'family_visit', 'cleaning_spree']:
+                available_events.append(event_type)
+            elif self.location == 'Bedroom' and event_type in ['work_session', 'study_session', 'late_night_activity', 'cleaning_spree']:
+                available_events.append(event_type)
+            
+            # Time-based filtering
+            if event_type == 'late_night_activity' and (22 <= now.hour or now.hour <= 6):
+                available_events.append(event_type)
+            elif event_type == 'morning_rush' and 6 <= now.hour <= 9:
+                available_events.append(event_type)
+            elif event_type in ['party_small', 'party_large', 'movie_night'] and 18 <= now.hour <= 23:
+                available_events.append(event_type)
+            elif event_type == 'work_session' and 8 <= now.hour <= 18:
+                available_events.append(event_type)
+        
+        # If no specific events are available, add some general ones
+        if not available_events:
+            available_events = ['work_session', 'cleaning_spree', 'study_session']
+        
+        # Select and trigger event
+        event_type = random.choice(available_events)
+        event = events[event_type]
+        
+        self.random_event_active = True
+        self.random_event_type = event_type
+        self.random_event_duration = event['duration']
+        self.multi_person_event = event['multi_person']
+        self.multi_person_count = event['people_count']
+        self.special_day_multiplier = event['occupancy_boost']
+        
+        print(f"🎉 {self.node_id} ({self.location}): Random event started - {event['description']} "
+              f"(duration: {event['duration']}min, people: {event['people_count']})")
+    
+    def get_work_from_home_probability(self):
+        """Determine if today is a work-from-home day"""
+        now = datetime.now()
+        day_of_week = now.weekday()
+        
+        # Higher probability on certain days
+        wfh_probabilities = {
+            0: 0.3,  # Monday
+            1: 0.4,  # Tuesday  
+            2: 0.4,  # Wednesday
+            3: 0.5,  # Thursday
+            4: 0.6,  # Friday
+            5: 0.1,  # Saturday
+            6: 0.1   # Sunday
+        }
+        
+        return wfh_probabilities.get(day_of_week, 0.3)
+    
+    def calculate_enhanced_occupancy_probability(self, base_prob):
+        """Apply enhancements to base occupancy probability"""
+        enhanced_prob = base_prob
+        
+        # Apply random event effects
+        if self.random_event_active:
+            enhanced_prob *= self.special_day_multiplier
+            
+            # Multi-person events increase occupancy duration and stability
+            if self.multi_person_event and self.multi_person_count > 1:
+                enhanced_prob += 0.1 * (self.multi_person_count - 1)
+        
+        # Work from home adjustments
+        now = datetime.now()
+        if self.get_work_from_home_probability() > random.random():
+            if 8 <= now.hour <= 18 and now.weekday() < 5:  # Business hours, weekdays
+                if self.location in ['Living Room', 'Bedroom']:
+                    enhanced_prob += 0.3  # Higher occupancy during work hours
+        
+        # Spontaneous activity spikes (small random boosts)
+        if random.random() < 0.05:  # 5% chance every check
+            spike_duration = random.randint(10, 30)  # 10-30 minutes
+            enhanced_prob += random.uniform(0.2, 0.4)
+            if not hasattr(self, 'activity_spike_end'):
+                self.activity_spike_end = datetime.now() + timedelta(minutes=spike_duration)
+                print(f"⚡ {self.node_id} ({self.location}): Activity spike for {spike_duration}min")
+        
+        # Check if activity spike has ended
+        if hasattr(self, 'activity_spike_end') and datetime.now() > self.activity_spike_end:
+            delattr(self, 'activity_spike_end')
+        
+        # Apply activity spike if active
+        if hasattr(self, 'activity_spike_end'):
+            enhanced_prob += 0.3
+        
+        # Ensure probability stays within bounds
+        return max(0, min(1, enhanced_prob))
+    
     def simulate_volumetric_occupancy(self):
         """Simulate occupancy as if detected by a volumetric sensor with realistic patterns"""
         now = datetime.now()
@@ -448,9 +686,17 @@ class VirtualIoTNode:
         minute = now.minute
         day_of_week = now.weekday()  # 0 = Monday, 6 = Sunday
         
-        # If in stability period, return last occupancy
+        # Check for random events first
+        self.check_for_random_events()
+        
+        # If in stability period, return last occupancy (but with some random variation for multi-person events)
         if self.occupancy_stability > 0:
             self.occupancy_stability -= 1
+            
+            # Multi-person events can have more dynamic occupancy changes
+            if self.multi_person_event and random.random() < 0.1:  # 10% chance to change during multi-person events
+                return 1 if random.random() < 0.8 else self.last_occupancy
+            
             return self.last_occupancy
         
         # Define realistic occupancy patterns by room and time
@@ -634,8 +880,11 @@ class VirtualIoTNode:
         minute_variation = math.sin((minute / 60) * 2 * math.pi) * 0.1
         occupancy_prob = max(0, min(1, base_prob + minute_variation))
         
+        # Apply enhancements (random events, work from home, activity spikes)
+        enhanced_prob = self.calculate_enhanced_occupancy_probability(occupancy_prob)
+        
         # Generate occupancy decision
-        new_occupancy = 1 if random.random() < occupancy_prob else 0
+        new_occupancy = 1 if random.random() < enhanced_prob else 0
         
         # If occupancy changes, set stability period (people don't constantly move)
         if new_occupancy != self.last_occupancy:
@@ -643,15 +892,33 @@ class VirtualIoTNode:
             if new_occupancy == 1:  # Entering room
                 stability_min = 10 if self.location == 'Kitchen' else 20  # Kitchen visits can be shorter
                 stability_max = 60 if self.location == 'Bedroom' else 40
+                
+                # Random events and multi-person activities have longer stability
+                if self.random_event_active:
+                    stability_min *= 2
+                    stability_max *= 2
+                    
             else:  # Leaving room
                 stability_min = 30  # Once you leave, stay away for a while
                 stability_max = 120
                 
+                # During random events, people might return sooner
+                if self.random_event_active:
+                    stability_min = int(stability_min * 0.7)
+                    stability_max = int(stability_max * 0.7)
+                
             self.occupancy_stability = random.randint(stability_min, stability_max)
             
-            # Log significant changes
+            # Log significant changes with event context
             transition = "entered" if new_occupancy else "left"
-            print(f"👤 {self.node_id} ({self.location}): Person {transition} room (stability: {self.occupancy_stability}s)")
+            event_context = ""
+            if self.random_event_active:
+                event_context = f" [{self.random_event_type}]"
+            elif hasattr(self, 'activity_spike_end'):
+                event_context = " [activity spike]"
+                
+            print(f"👤 {self.node_id} ({self.location}): Person {transition} room{event_context} "
+                  f"(stability: {self.occupancy_stability}s)")
         
         self.last_occupancy = new_occupancy
         return new_occupancy
@@ -736,6 +1003,22 @@ class VirtualIoTNode:
         led_usage = 0.15 if self.led_status else 0  # LED consumption: 150W when on, 0W when off
         device_usage = 0.008 if occupancy else 0.002  # Other devices usage
         
+        # Multi-person and event adjustments
+        if self.multi_person_event and occupancy:
+            # More people = more device usage, but LED usage stays the same
+            people_factor = min(self.multi_person_count, 4) / 1.0  # Cap at 4x
+            base_usage *= people_factor
+            device_usage *= people_factor
+            
+        # Random event usage increases
+        if self.random_event_active and occupancy:
+            if self.random_event_type in ['party_small', 'party_large', 'family_visit']:
+                device_usage *= 1.5  # Parties use more devices
+            elif self.random_event_type in ['cooking_session']:
+                device_usage *= 2.0  # Cooking uses much more energy
+            elif self.random_event_type in ['work_session', 'study_session']:
+                device_usage *= 1.3  # Work equipment
+        
         # Add some realistic variation (smaller variation to keep LED difference clear)
         variation = random.uniform(-0.002, 0.002)
         room_usage = round(base_usage + led_usage + device_usage + variation, 3)
@@ -751,6 +1034,10 @@ class VirtualIoTNode:
             'manual_override': self.manual_override,
             'energy_saving_mode': self.energy_saving_mode,
             'button_presses': self.button_presses,
+            'random_event_active': self.random_event_active,
+            'random_event_type': self.random_event_type if self.random_event_active else None,
+            'multi_person_count': self.multi_person_count if self.multi_person_event else 1,
+            'activity_spike': hasattr(self, 'activity_spike_end'),
             'timestamp': datetime.now().isoformat()
         }
     
@@ -783,7 +1070,16 @@ class VirtualIoTNode:
                 status_icon = "💡" if self.led_status else "🌙"
                 mode_icon = "🔧" if self.manual_override else "🤖"
                 
-                print(f"{status_icon} {self.node_id} ({self.location}) {mode_icon}: "
+                # Add event context to logging
+                event_info = ""
+                if self.random_event_active:
+                    event_info = f" 🎉{self.random_event_type}"
+                    if self.multi_person_event:
+                        event_info += f"({self.multi_person_count}p)"
+                elif hasattr(self, 'activity_spike_end'):
+                    event_info = " ⚡spike"
+                
+                print(f"{status_icon} {self.node_id} ({self.location}) {mode_icon}{event_info}: "
                     f"lux={data['lux']}, occ={data['occupancy']}, "
                     f"temp={data['temperature']}°C, usage={data['room_usage']}kWh")
                 
@@ -794,8 +1090,10 @@ class VirtualIoTNode:
     def connect_mqtt(self):
         """Connect to MQTT broker"""
         try:
-            print(f"🔌 {self.node_id} connecting to MQTT broker...")
-            self.client.connect("localhost", 1883, 60)
+            # Use mosquitto hostname in Docker, localhost otherwise
+            mqtt_host = "mosquitto" if "DOCKER_CONTAINER" in os.environ else "localhost"
+            print(f"🔌 {self.node_id} connecting to MQTT broker at {mqtt_host}...")
+            self.client.connect(mqtt_host, 1883, 60)
             self.client.loop_start()
             return True
         except Exception as e:

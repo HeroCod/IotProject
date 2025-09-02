@@ -1,6 +1,8 @@
 {
   "model_type": "energy_saving_lighting_control",
-  "version": "3.0",
+  "version": "3.1",
+  "scikit_learn_version": "1.4.0",
+  "compatibility": "controller_deployment_ready",
   "objective": "minimize_lighting_energy_consumption",
   "dataset_source": "Real Smart Home Energy Dataset (Kaggle)",
   "accuracy": 1.0,
@@ -45,6 +47,8 @@
   },
   "training_info": {
     "dataset_size": 50000,
+    "scikit_learn_version": "1.4.0",
+    "controller_compatible": true,
     "features_used": [
       "hour_of_day",
       "total_room_usage",

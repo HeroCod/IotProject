@@ -97,8 +97,15 @@ def optimizer():
 @app.route('/api/status')
 def api_status():
     """WebApp health check with dashboard-compatible data"""
+    print("=== DEBUG: WebApp /api/status called ===")
     controller_status = call_controller_api('status')
     devices_data = call_controller_api('devices')
+    
+    # Debug logging
+    print(f"Controller status: {controller_status}")
+    print(f"Controller energy_stats: {controller_status.get('energy_stats', 'NOT FOUND')}")
+    logger.info(f"Controller status: {controller_status}")
+    logger.info(f"Controller energy_stats: {controller_status.get('energy_stats', 'NOT FOUND')}")
     
     # Count online nodes
     nodes_online = len(devices_data) if isinstance(devices_data, dict) else 0
@@ -115,10 +122,10 @@ def api_status():
         'energy_stats': {
             'total_consumption': sum(
                 device.get('latest_data', {}).get('room_usage', 0) 
-                for device in devices_data.values()
+                for device in devices_data.values() if isinstance(device, dict)
             ) if isinstance(devices_data, dict) else 0,
             'energy_saved': controller_status.get('energy_stats', {}).get('energy_saved', 0),
-            'optimization_events': controller_status.get('energy_stats', {}).get('ml_optimizations', 0),
+            'optimization_events': controller_status.get('energy_stats', {}).get('optimization_events', 0),
             'manual_overrides': controller_status.get('active_overrides', 0)
         },
         'latest_data': {
@@ -128,6 +135,7 @@ def api_status():
                 'type': 'sensor'
             }
             for device_id, device_data in devices_data.items()
+            if isinstance(device_data, dict)
         } if isinstance(devices_data, dict) else {},
         'timestamp': datetime.now().isoformat()
     }

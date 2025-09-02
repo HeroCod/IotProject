@@ -1,0 +1,32 @@
+{
+  "model_type": "RandomForestClassifier",
+  "scikit_learn_version": "1.4.0",
+  "features": [
+    "hour_of_day",
+    "total_room_usage",
+    "lights_currently_on",
+    "space_occupied",
+    "solar_surplus",
+    "cloudCover",
+    "visibility"
+  ],
+  "model_params": {
+    "n_estimators": 100,
+    "max_depth": 10,
+    "min_samples_split": 5,
+    "min_samples_leaf": 2,
+    "random_state": 42,
+    "class_weight": "balanced"
+  },
+  "performance_metrics": {
+    "accuracy": 0.9999,
+    "energy_focused_score": 0.99997,
+    "training_samples": 40000,
+    "test_samples": 10000
+  },
+  "energy_impact": {
+    "baseline_consumption_kwh": 7043.03,
+    "potential_savings_kwh": 3200.1,
+    "efficiency_improvement_percent": 45.4
+  }
+}

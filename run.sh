@@ -70,39 +70,53 @@ case "$1" in
     if [ "$2" = "--virtual" ]; then
         echo "🚀 Starting Complete IoT Energy Management System with Virtual Nodes..."
         echo "====================================================================="
+        
+        # Build containers if needed
+        if ! docker images | grep -q iot_controller; then
+            echo "📦 Building containers..."
+            docker compose -f docker-compose.virtual.yml build
+        fi
+        
+        # Start all services including virtual nodes
+        echo "🌐 Starting all services (MySQL, MQTT, Controller, WebApp, Virtual Nodes)..."
+        docker compose -f docker-compose.virtual.yml up -d
+        
+        echo "✅ System with virtual nodes started successfully!"
+        echo ""
+        echo "🎭 Virtual IoT Nodes: Running in Docker container"
+        echo "   - node1: Living Room"
+        echo "   - node2: Kitchen"  
+        echo "   - node3: Bedroom"
+        echo "   🔍 View virtual node logs: docker compose -f docker-compose.virtual.yml logs virtual-nodes"
+        
     else
         echo "🚀 Starting Complete IoT Energy Management System..."
         echo "=================================================="
+        
+        # Build containers if needed
+        if ! docker images | grep -q iot_controller; then
+            echo "📦 Building containers..."
+            docker compose build
+        fi
+        
+        # Start core services only
+        echo "� Starting core services (MySQL, MQTT, Controller, WebApp)..."
+        docker compose up -d
+        
+        echo "✅ Core system started successfully!"
+        echo ""
+        echo "ℹ️  Virtual nodes not started. Use './run.sh start --virtual' to include them."
     fi
-    
-    # Build containers if needed
-    if ! docker images | grep -q iot_controller; then
-        echo "📦 Building containers..."
-        docker compose build
-    fi
-    
-    # Start core services
-    echo "🌐 Starting core services (MySQL, MQTT, Controller, WebApp)..."
-    docker compose up -d
     
     # Wait for services to be ready
     echo "⏳ Waiting for services to start..."
     sleep 10
     
-    # Start simulated IoT nodes only if --virtual flag is used or if it's the default behavior
-    if [ "$2" = "--virtual" ] || [ -z "$2" ]; then
-        echo "🎭 Starting virtual IoT nodes..."
-        $0 start-simulators
-    else
-        echo "ℹ️  Virtual nodes not started. Use --virtual flag to include them."
-    fi
-    
-    echo "✅ System started successfully!"
     echo ""
     echo "🌍 Access points:"
     echo "   📊 Web Dashboard:    http://localhost:5000"
-    echo "   🎛️  Device Control:   http://localhost:5000/control"
     echo "   📈 Analytics:        http://localhost:5000/analytics"
+    echo "   🤖 AI Optimizer:    http://localhost:5000/optimizer"
     echo "   🔧 Controller API:   http://localhost:5001/api/status"
     echo ""
     echo "📋 System status:"
@@ -110,8 +124,11 @@ case "$1" in
     echo "   MySQL DB:       localhost:3306"
     echo "   Controller:     localhost:5001"
     echo "   WebApp:         localhost:5000"
+    if [ "$2" = "--virtual" ]; then
+        echo "   Virtual Nodes:  Docker container"
+    fi
     echo ""
-    echo "📝 View logs with: ./run.sh logs"
+    echo "📝 View logs with: ./run.sh logs [service-name]"
     ;;
 
   start-simulators)
@@ -121,13 +138,14 @@ case "$1" in
     pkill -f "python.*virtual_nodes" 2>/dev/null || true
     
     # Check if virtual_nodes.py exists
-    if [ ! -f "virtual_nodes.py" ]; then
+    if [ ! -f "virtual_nodes/virtual_nodes.py" ]; then
         echo "❌ No simulator found!"
         return 1
     fi
     
     # Start the new interactive virtual nodes
     echo "🚀 Starting interactive virtual nodes system..."
+    cd virtual_nodes
     nohup python3 virtual_nodes.py > /tmp/virtual_nodes.log 2>&1 &
     echo "✅ Interactive virtual nodes started (PID: $!)"
     echo "📡 Virtual nodes support full device control"
@@ -177,15 +195,16 @@ case "$1" in
   stop)
     echo "🛑 Stopping IoT Energy Management System..."
     
-    # Stop Docker services
-    docker compose down
+    # Stop Docker services (try both compose files)
+    docker compose down 2>/dev/null || true
+    docker compose -f docker-compose.virtual.yml down 2>/dev/null || true
     
-    # Stop simulators
+    # Stop any standalone simulators
     if [ -f "$LOG_DIR/simulators.pid" ]; then
         kill $(cat "$LOG_DIR/simulators.pid") 2>/dev/null || true
         rm "$LOG_DIR/simulators.pid"
     fi
-    pkill -f "python.*node.*sim" 2>/dev/null || true
+    pkill -f "python.*virtual_nodes" 2>/dev/null || true
     pkill -f "cooja" 2>/dev/null || true
     
     echo "✅ System stopped"
@@ -194,17 +213,34 @@ case "$1" in
   logs)
     if [ "$2" ]; then
         # Show specific service logs
-        docker compose logs -f "$2"
+        if [ "$2" = "virtual-nodes" ]; then
+            # Check if virtual compose file is running
+            if docker compose -f docker-compose.virtual.yml ps | grep -q virtual-nodes; then
+                docker compose -f docker-compose.virtual.yml logs -f virtual-nodes
+            else
+                echo "❌ Virtual nodes container not running. Start with: ./run.sh start --virtual"
+            fi
+        else
+            # Try regular compose file first, then virtual
+            docker compose logs -f "$2" 2>/dev/null || docker compose -f docker-compose.virtual.yml logs -f "$2"
+        fi
     else
-        # Show all logs
+        # Show all logs - check which compose file is running
         echo "📋 System Logs:"
         echo "=============="
         echo "🐳 Docker Services:"
-        docker compose logs --tail=50
+        
+        if docker compose -f docker-compose.virtual.yml ps | grep -q virtual-nodes; then
+            echo "   (Virtual mode - with simulated nodes)"
+            docker compose -f docker-compose.virtual.yml logs --tail=50
+        else
+            echo "   (Standard mode)"
+            docker compose logs --tail=50
+        fi
         
         if [ -f "$LOG_DIR/simulators.log" ]; then
             echo ""
-            echo "🎭 Simulators:"
+            echo "🎭 Standalone Simulators:"
             tail -20 "$LOG_DIR/simulators.log"
         fi
     fi
@@ -215,17 +251,27 @@ case "$1" in
     echo "===================="
     
     echo "🐳 Docker Services:"
-    docker compose ps
+    # Check which compose file is running
+    if docker compose -f docker-compose.virtual.yml ps | grep -q virtual-nodes; then
+        echo "   (Virtual mode - with simulated nodes)"
+        docker compose -f docker-compose.virtual.yml ps
+    else
+        echo "   (Standard mode)"
+        docker compose ps
+    fi
     
     echo ""
     echo "🌐 Service Health:"
     curl -s http://localhost:5001/api/status 2>/dev/null | python3 -m json.tool || echo "❌ Controller API not responding"
-    curl -s http://localhost:5000/api/status 2>/dev/null | python3 -m json.tool || echo "❌ WebApp not responding"
+    
+    echo ""
+    echo "🤖 ML Model Performance:"
+    curl -s http://localhost:5001/api/baseline-comparison 2>/dev/null | python3 -m json.tool || echo "❌ Baseline comparison not available"
     
     if [ -f "$LOG_DIR/simulators.pid" ]; then
-        echo "🎭 Simulators: Running (PID: $(cat $LOG_DIR/simulators.pid))"
+        echo "🎭 Standalone Simulators: Running (PID: $(cat $LOG_DIR/simulators.pid))"
     else
-        echo "🎭 Simulators: Not running"
+        echo "🎭 Standalone Simulators: Not running"
     fi
     ;;
 
@@ -260,21 +306,31 @@ case "$1" in
     echo "Usage: ./run.sh <command>"
     echo ""
     echo "Commands:"
-    echo "  init             Initialize system and install dependencies"
-    echo "  start [--virtual] Start complete system (--virtual includes simulated nodes)"
-    echo "  stop             Stop all services"
-    echo "  sim              Start with Cooja simulation"
-    echo "  build            Build Docker containers"
-    echo "  logs [svc]       Show logs (optional: specific service)"
-    echo "  status           Show system status"
-    echo "  cli <cmd>        Command-line interface"
+    echo "  init                 Initialize system and install dependencies"
+    echo "  start                Start core system (MySQL, MQTT, Controller, WebApp)"
+    echo "  start --virtual      Start complete system with Docker-based virtual IoT nodes"
+    echo "  stop                 Stop all services"
+    echo "  sim                  Start with Cooja simulation"
+    echo "  build                Build Docker containers"
+    echo "  logs [service]       Show logs (optional: specific service)"
+    echo "  status               Show system status and ML performance"
+    echo "  cli <cmd>            Command-line interface"
     echo ""
     echo "🚀 Quick Start:"
-    echo "  ./run.sh init           # First time setup"
-    echo "  ./run.sh start --virtual # Start with virtual IoT nodes"
-    echo "  ./run.sh stop           # Stop system"
+    echo "  ./run.sh init               # First time setup"
+    echo "  ./run.sh start --virtual    # Start with virtual IoT nodes (Docker)"
+    echo "  ./run.sh logs virtual-nodes # View virtual node logs"
+    echo "  ./run.sh stop               # Stop system"
     echo ""
-    echo "🌍 Web Interface: http://localhost:5000"
+    echo "� Virtual Nodes:"
+    echo "  --virtual flag starts containerized IoT nodes that:"
+    echo "  • Simulate realistic sensor data (temperature, light, occupancy)"
+    echo "  • Respond to ML-driven lighting control commands"
+    echo "  • Support manual overrides from the web interface"
+    echo "  • Follow time-based behavioral patterns"
+    echo ""
+    echo "�🌍 Web Interface: http://localhost:5000"
+    echo "🔧 API Interface: http://localhost:5001/api/status"
     ;;
 
 esac
