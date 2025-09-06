@@ -122,7 +122,7 @@
       <skin>org.contikios.cooja.plugins.skins.UDGMVisualizerSkin</skin>
       <viewport>4.905687391179874 0.0 0.0 4.905687391179874 103.71750877249646 -144.27245574940267</viewport>
     </plugin_config>
-    <bounds x="1" y="1" height="400" width="400" z="1" />
+    <bounds x="1" y="1" height="444" width="403" />
   </plugin>
   <plugin>
     org.contikios.cooja.plugins.LogListener
@@ -131,7 +131,7 @@
       <formatted_time />
       <coloring />
     </plugin_config>
-    <bounds x="0" y="0" height="609" width="874" />
+    <bounds x="401" y="161" height="281" width="473" z="1" />
   </plugin>
   <plugin>
     org.contikios.cooja.plugins.TimeLine

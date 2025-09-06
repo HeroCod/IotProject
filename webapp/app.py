@@ -111,22 +111,39 @@ def api_status():
     nodes_online = len(devices_data) if isinstance(devices_data, dict) else 0
     
     # Transform controller status to match frontend expectations
+    controller_energy_stats = controller_status.get('energy_stats', {}) if isinstance(controller_status, dict) else {}
+    
+    # Calculate current consumption (sum of all current room_usage)
+    current_total_consumption = sum(
+        device.get('latest_data', {}).get('room_usage', 0) 
+        for device in devices_data.values() if isinstance(device, dict)
+    ) if isinstance(devices_data, dict) else 0
+    
+    # Calculate estimated total consumption from accumulated stats
+    estimated_total_consumption = 0
+    if isinstance(controller_energy_stats, dict):
+        # Estimate baseline consumption: assume each decision could have used 0.15kWh if lights were always on
+        total_decisions = controller_energy_stats.get('total_decisions', 0)
+        energy_saved = controller_energy_stats.get('energy_saved', 0)
+        
+        # Estimated baseline if lights were always on when occupied (simplified calculation)
+        estimated_baseline = total_decisions * 0.05  # Average 0.05kWh per decision (conservative estimate)
+        estimated_total_consumption = estimated_baseline - energy_saved
+        
     dashboard_status = {
         'webapp_status': 'running',
         'controller_status': controller_status,
         'system_status': {
-            'mqtt_connected': controller_status.get('status') == 'running',
-            'db_connected': controller_status.get('status') == 'running',
+            'mqtt_connected': controller_status.get('status') == 'running' if isinstance(controller_status, dict) else False,
+            'db_connected': controller_status.get('status') == 'running' if isinstance(controller_status, dict) else False,
             'nodes_online': nodes_online
         },
         'energy_stats': {
-            'total_consumption': sum(
-                device.get('latest_data', {}).get('room_usage', 0) 
-                for device in devices_data.values() if isinstance(device, dict)
-            ) if isinstance(devices_data, dict) else 0,
-            'energy_saved': controller_status.get('energy_stats', {}).get('energy_saved', 0),
-            'optimization_events': controller_status.get('energy_stats', {}).get('optimization_events', 0),
-            'manual_overrides': controller_status.get('active_overrides', 0)
+            # Use estimated total consumption if significant, otherwise current snapshot
+            'total_consumption': max(estimated_total_consumption, current_total_consumption),
+            'energy_saved': controller_energy_stats.get('energy_saved', 0) if isinstance(controller_energy_stats, dict) else 0,
+            'optimization_events': controller_energy_stats.get('optimization_events', 0) if isinstance(controller_energy_stats, dict) else 0,
+            'manual_overrides': controller_status.get('active_overrides', 0) if isinstance(controller_status, dict) else 0
         },
         'latest_data': {
             device_id: {
@@ -155,39 +172,44 @@ def api_sensor_data():
 @app.route('/api/historical/<int:hours>')
 def api_historical_data(hours):
     """Get historical sensor data for the specified number of hours"""
-    # For now, simulate historical data based on current sensor readings
-    # In a real implementation, this would query the database
-    current_data = call_controller_api('sensor-data')
+    # Get real historical data from the controller
+    controller_data = call_controller_api(f'sensor-data?hours={hours}')
     
-    # Generate simulated historical data
-    import random
-    from datetime import datetime, timedelta
-    
+    # Transform controller data format to match analytics expectations
     historical_data = []
-    if isinstance(current_data, list):
-        base_time = datetime.now()
-        for i in range(min(hours * 12, 100)):  # 12 points per hour, max 100 points
-            timestamp = base_time - timedelta(minutes=i * 5)
-            
-            for device_id in ['node1', 'node2', 'node3']:
-                # Add some variation to current data
-                usage_base = 0.1 if device_id == 'node1' else (0.15 if device_id == 'node2' else 0.08)
-                room_usage = max(0, usage_base + random.uniform(-0.05, 0.05))
-                
-                historical_data.append({
-                    'device_id': device_id,
-                    'timestamp': timestamp.isoformat(),
-                    'data': {
-                        'room_usage': room_usage,
-                        'lux': random.randint(20, 80),
-                        'occupancy': random.choice([0, 1]),
-                        'temperature': random.uniform(20, 25),
-                        'led_status': random.choice([0, 1]),
-                        'energy_saving_mode': random.choice([0, 1]),
-                        'manual_override': random.choice([0, 0, 0, 1])  # 25% chance
-                    }
-                })
     
+    if isinstance(controller_data, list):
+        # Limit the data to prevent overwhelming the frontend (max 500 points)
+        limited_data = controller_data[:min(len(controller_data), 500)]
+        
+        for item in limited_data:
+            device_id = item.get('device_id')
+            payload = item.get('payload', {})
+            timestamp = item.get('timestamp')
+            
+            # Transform to match expected format
+            transformed_item = {
+                'device_id': device_id,
+                'timestamp': payload.get('timestamp', timestamp),  # Use payload timestamp if available
+                'data': {
+                    'room_usage': payload.get('room_usage', 0),
+                    'occupancy': payload.get('occupancy', 0),
+                    'temperature': payload.get('temperature', 22),
+                    'light_level': payload.get('lux', 50),
+                    'motion': payload.get('occupancy', 0) > 0,  # Convert occupancy to motion boolean
+                    'optimized': payload.get('energy_saving_mode', 0) > 0,  # Use energy saving mode as optimization indicator
+                    'led_status': payload.get('led_status', 0),
+                    'manual_override': payload.get('manual_override', False)
+                }
+            }
+            historical_data.append(transformed_item)
+    
+    # If no data available, return empty result
+    if not historical_data:
+        print(f"⚠️ No historical data available for {hours} hours from controller")
+        return jsonify({'data': []})
+    
+    print(f"📊 Returning {len(historical_data)} historical data points for {hours} hours")
     return jsonify({'data': historical_data})
 
 @app.route('/api/devices/<device_id>/override', methods=['POST'])

@@ -604,9 +604,14 @@
                     <h4>⚡ Energy Mode</h4>
                     <div class="energy-mode-info">
                         <p>Energy saving mode is automatically managed by the AI system based on occupancy patterns, ambient light, and user preferences.</p>
-                        <button class="btn btn-info" onclick="showEnergyModeInfo()">
-                            📊 View Statistics
-                        </button>
+                        <div class="control-buttons">
+                            <button class="btn btn-info" onclick="showEnergyModeInfo()">
+                                📊 View Statistics
+                            </button>
+                            <button class="btn" onclick="resetChartScales()" style="background: #6c757d; color: white;">
+                                📈 Reset Chart Scales
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -617,6 +622,14 @@
     <script>
         // Initialize Socket.IO connection
         const socket = io();
+        
+        // Peak value tracking for charts
+        let chartPeaks = {
+            energy: 0.2,      // Minimum scale for energy chart
+            temperature: 30,   // Maximum scale for temperature chart
+            light: 100,       // Maximum scale for light chart
+            occupancy: 1.2    // Fixed scale for occupancy chart
+        };
         
         // Chart configuration
         const ctx = document.getElementById('energyChart').getContext('2d');
@@ -650,6 +663,7 @@
                 scales: {
                     y: {
                         beginAtZero: true,
+                        max: chartPeaks.energy,
                         title: {
                             display: true,
                             text: 'Energy Consumption (kWh)'
@@ -704,7 +718,7 @@
                     y: {
                         beginAtZero: false,
                         min: 15,
-                        max: 30,
+                        max: chartPeaks.temperature,
                         title: {
                             display: true,
                             text: 'Temperature (°C)'
@@ -758,6 +772,7 @@
                 scales: {
                     y: {
                         beginAtZero: true,
+                        max: chartPeaks.light,
                         title: {
                             display: true,
                             text: 'Light Level (Lux)'
@@ -1019,6 +1034,22 @@
             const lux = data.lux || 0;
             const occupancy = data.occupancy || 0;
             
+            // Update peak values
+            if (consumption > chartPeaks.energy) {
+                chartPeaks.energy = Math.ceil(consumption * 1.1 * 10) / 10; // Add 10% buffer and round up
+                energyChart.options.scales.y.max = chartPeaks.energy;
+            }
+            
+            if (temperature > chartPeaks.temperature) {
+                chartPeaks.temperature = Math.ceil(temperature + 2); // Add 2°C buffer
+                temperatureChart.options.scales.y.max = chartPeaks.temperature;
+            }
+            
+            if (lux > chartPeaks.light) {
+                chartPeaks.light = Math.ceil(lux * 1.1 / 10) * 10; // Add 10% buffer and round to nearest 10
+                lightChart.options.scales.y.max = chartPeaks.light;
+            }
+            
             let datasetIndex = -1;
             if (deviceId === 'node1') datasetIndex = 0;
             else if (deviceId === 'node2') datasetIndex = 1;
@@ -1223,6 +1254,27 @@
                 `📊 Energy Statistics: ${stats} kWh saved through ${events} optimization events. The AI system automatically optimizes lighting based on occupancy, ambient light, and usage patterns.`, 
                 'info'
             );
+        }
+        
+        function resetChartScales() {
+            // Reset peak values to defaults
+            chartPeaks.energy = 0.2;
+            chartPeaks.temperature = 30;
+            chartPeaks.light = 100;
+            chartPeaks.occupancy = 1.2;
+            
+            // Update chart scales
+            energyChart.options.scales.y.max = chartPeaks.energy;
+            temperatureChart.options.scales.y.max = chartPeaks.temperature;
+            lightChart.options.scales.y.max = chartPeaks.light;
+            
+            // Update all charts
+            energyChart.update();
+            temperatureChart.update();
+            lightChart.update();
+            occupancyChart.update();
+            
+            showGlobalResponse('📊 Chart scales have been reset to default values', 'info');
         }
         
         function showGlobalResponse(message, type) {

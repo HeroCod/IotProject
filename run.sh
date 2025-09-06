@@ -27,7 +27,7 @@ case "$1" in
     
     echo "📦 Installing system dependencies..."
     sudo apt-get update
-    sudo apt-get install -y git ant ca-certificates curl python3 python3-pip
+    sudo apt-get install -y git ant ca-certificates curl python3 python3-pip gcc-arm-none-eabi binutils-arm-none-eabi gdb-arm-none-eabi 
     
     echo "🐳 Installing Docker..."
     # Install Docker if not present
@@ -48,9 +48,21 @@ case "$1" in
         echo "⚠️  Please log out and back in for Docker permissions to take effect"
     fi
     
-    echo "🔧 Initializing Contiki-NG..."
-    if [ ! -d "contiki-ng/tools" ]; then
+    echo "🔧 Initializing Contiki-NG and nRF SDK..."
+    if [ ! -d "contiki-ng" ]; then
       git clone --recurse-submodules https://github.com/contiki-ng/contiki-ng.git ./contiki-ng
+    fi
+
+    # Install nRF5 SDK for Thread and Zigbee v4.1.0
+    if [ ! -d "nrf5-sdk" ]; then
+        echo "📦 Downloading nRF5 SDK for Thread and Zigbee v4.1.0..."
+        curl -L "https://www.nordicsemi.com/-/media/Software-And-Tools/Software/nRF5-SDK-for-Thread-and-Zigbee/v4-1-0/nrf5-sdk-for-thread-and-zigbee-v4-1-0-d6747a0.zip" -o nrf5-sdk.zip
+        unzip -q nrf5-sdk.zip
+        mv nrf5-sdk-for-thread-and-zigbee-v4-1-0-d6747a0 nrf5-sdk
+        rm nrf5-sdk.zip
+        
+        echo "🩹 Applying required patch to nRF5 SDK..."
+        (cd contiki-ng && git apply arch/cpu/nrf/patches/nrf5-sdk-4.1.0.patch)
     fi
     
     echo "✅ Initialization complete!"
@@ -184,12 +196,65 @@ case "$1" in
     ;;
 
   flash)
-    echo "[*] Building firmware for nRF52840 hardware..."
-    cd contiki_nodes
-    make node1 TARGET=nrf52840dk
-    make node2 TARGET=nrf52840dk
-    make node3 TARGET=nrf52840dk
-    echo "[*] Flash binaries manually using nrfjprog/openocd."
+    TARGET_NODE=$2
+    if [ -z "$TARGET_NODE" ]; then
+        echo "Usage: ./run.sh flash <node1|node2|node3|simple_test|border-router>"
+        echo "Builds and flashes the firmware for the specified node."
+        echo "Connect one device at a time before running the command."
+        exit 1
+    fi
+
+    # Check for nrfutil (needed for DFU upload)
+    if ! command -v nrfutil &> /dev/null; then
+        echo "❌ 'nrfutil' command not found."
+        echo "   Please install nrfutil for DFU flashing."
+        exit 1
+    fi
+
+    echo "🔌 Flashing firmware for $TARGET_NODE using DFU..."
+
+    # Use the newer nrfutil for DFU operations
+    NRFUTIL_CMD="$HOME/.nrfutil/bin/nrfutil"
+    
+    if [ ! -f "$NRFUTIL_CMD" ]; then
+        echo "❌ Newer nrfutil not found at $NRFUTIL_CMD"
+        echo "   Please install nrfutil 8.x from Nordic Semiconductor"
+        exit 1
+    fi
+
+    if [[ "$TARGET_NODE" == "node1" || "$TARGET_NODE" == "node2" || "$TARGET_NODE" == "node3" || "$TARGET_NODE" == "simple_test" ]]; then
+        echo "   Building and flashing $TARGET_NODE firmware via DFU..."
+        (cd contiki_nodes && make $TARGET_NODE.dfu-upload TARGET=nrf52840 BOARD=dongle PORT=/dev/ttyACM0 NRFUTIL="$NRFUTIL_CMD")
+        
+        if [ $? -eq 0 ]; then
+            echo "✅ $TARGET_NODE flashed successfully via DFU."
+            echo "🔍 Verifying firmware..."
+            sleep 2
+            echo "📡 Testing serial output (5 seconds)..."
+            timeout 5s cat /dev/ttyACM0 || echo "No immediate output (normal for some firmware)"
+        else
+            echo "❌ Failed to flash $TARGET_NODE."
+            exit 1
+        fi
+
+    elif [ "$TARGET_NODE" == "border-router" ]; then
+        echo "   Building and flashing border-router firmware via DFU..."
+        (cd contiki-ng/examples/rpl-border-router && make border-router.dfu-upload TARGET=nrf52840 BOARD=dongle PORT=/dev/ttyACM0 NRFUTIL="$NRFUTIL_CMD")
+        
+        if [ $? -eq 0 ]; then
+            echo "✅ border-router flashed successfully via DFU."
+            echo "🔍 Verifying firmware..."
+            sleep 2
+            echo "📡 Testing serial output (5 seconds)..."
+            timeout 5s cat /dev/ttyACM0 || echo "No immediate output (normal for some firmware)"
+        else
+            echo "❌ Failed to flash border-router."
+            exit 1
+        fi
+    else
+        echo "❌ Unknown target: $TARGET_NODE. Use node1, node2, node3, simple_test or border-router."
+        exit 1
+    fi
     ;;
 
   stop)
@@ -299,6 +364,27 @@ case "$1" in
     fi
     ;;
 
+  install-nrf-tools)
+    echo "📦 Installing nRF Command-Line Tools..."
+    # URL for the nRF Command Line Tools for Linux amd64
+    NRF_TOOLS_URL="https://nsscprodmedia.blob.core.windows.net/prod/software-and-other-downloads/desktop-software/nrf-command-line-tools/sw/versions-10-x-x/10-24-2/nrf-command-line-tools_10.24.2_amd64.deb"
+    DEB_FILE="nrf-command-line-tools_10.24.2_amd64.deb"
+
+    echo "   Downloading from Nordic Semiconductor..."
+    curl -L "$NRF_TOOLS_URL" -o "$DEB_FILE"
+
+    echo "   Installing .deb package (requires sudo)..."
+    sudo apt install ./$DEB_FILE
+
+    # Verify installation
+    if command -v nrfjprog &> /dev/null; then
+        echo "✅ nRF Command-Line Tools installed successfully."
+        echo "   nrfjprog version: $(nrfjprog --version)"
+    else
+        echo "❌ Installation failed. Please try installing manually."
+    fi
+    ;;
+
   *)
     echo "IoT Energy Management System"
     echo "============================="
@@ -315,6 +401,7 @@ case "$1" in
     echo "  logs [service]       Show logs (optional: specific service)"
     echo "  status               Show system status and ML performance"
     echo "  cli <cmd>            Command-line interface"
+    echo "  install-nrf-tools    Install Nordic's nRF Command-Line Tools"
     echo ""
     echo "🚀 Quick Start:"
     echo "  ./run.sh init               # First time setup"

@@ -1,9 +1,17 @@
 CONTIKI_PROJECT = node1 node2 node3
-all: $(CONTIKI_PROJECT)
+all: node1
+
+SMALL = 1
+
+# Include MQTT module for MQTT functionality
+MODULES += os/net/app-layer/mqtt
 
 CONTIKI = ../contiki-ng
 
 include $(CONTIKI)/Makefile.dir-variables
-MODULES += $(CONTIKI_NG_APP_LAYER_DIR)/mqtt
+
+# Critical flags to ignore warnings that cause build failures
+CFLAGS += -Wno-error=unused-variable
+CFLAGS += -Wno-error=unused-function
 
 include $(CONTIKI)/Makefile.include

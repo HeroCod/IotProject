@@ -17,7 +17,6 @@
 #include "mqtt.h"
 #include "dev/leds.h"
 #include "dev/button-hal.h"
-#include "dev/button-sensor.h"
 
 #define LOG_MODULE "Node2-Kitchen"
 #define LOG_LEVEL LOG_LEVEL_INFO
@@ -30,7 +29,6 @@
 static struct mqtt_connection conn;
 static char pub_topic[] = "sensors/node2/data";
 static char sub_topic[] = "actuators/node2/led";
-static char button_topic[] = "sensors/node2/button";
 
 // SOLO PROJECT - Physical interaction states
 static int manual_override = 0;  // Manual control via button
@@ -39,8 +37,7 @@ static int button_count = 0;    // Button press counter
 static int led_status = 0;      // LED illumination status
 
 PROCESS(node2_process, "Node2 Process");
-PROCESS(button_handler_process, "Button handler");
-AUTOSTART_PROCESSES(&node2_process, &button_handler_process);
+AUTOSTART_PROCESSES(&node2_process);
 
 static void mqtt_event(struct mqtt_connection *m, mqtt_event_t event, void *data) {
   switch(event) {
@@ -68,48 +65,6 @@ static void mqtt_event(struct mqtt_connection *m, mqtt_event_t event, void *data
     default:
       break;
   }
-}
-
-/*---------------------------------------------------------------------------*/
-/* SOLO PROJECT - Physical Button Interaction Handler */
-PROCESS_THREAD(button_handler_process, ev, data)
-{
-    PROCESS_BEGIN();
-    
-    // Activate button sensor
-    SENSORS_ACTIVATE(button_sensor);
-    
-    while(1) {
-        PROCESS_WAIT_EVENT_UNTIL(ev == sensors_event && data == &button_sensor);
-        
-        button_count++;
-        manual_override = !manual_override; // Toggle manual override
-        
-        LOG_INFO("🔘 BUTTON PRESSED! Count: %d, Manual Override: %s\n", 
-               button_count, manual_override ? "ON" : "OFF");
-        
-        // LED feedback for button press
-        if(manual_override) {
-            leds_on(LEDS_BLUE);  // Blue = Manual mode
-            LOG_INFO("💡 Manual control activated - LEDs under user control\n");
-        } else {
-            leds_off(LEDS_BLUE);
-            LOG_INFO("🤖 Automatic control restored - ML energy optimization active\n");
-        }
-        
-        // Send button press notification via MQTT
-        char button_msg[128];
-        snprintf(button_msg, sizeof(button_msg), 
-                 "{\"button_press\":%d,\"manual_override\":%d,\"device_id\":\"node2\"}", 
-                 button_count, manual_override);
-        
-        mqtt_publish(&conn, NULL, button_topic, (uint8_t *)button_msg, 
-                    strlen(button_msg), MQTT_QOS_LEVEL_0, MQTT_RETAIN_OFF);
-                         
-        LOG_INFO("📡 Button event sent via MQTT\n");
-    }
-    
-    PROCESS_END();
 }
 
 PROCESS_THREAD(node2_process, ev, data) {
@@ -148,7 +103,7 @@ PROCESS_THREAD(node2_process, ev, data) {
       int temperature = 22 + (random_rand() % 8); // 22-30°C
       
       // Energy consumption based on occupancy and manual override
-      float room_usage;
+      float room_usage = 0.0f;
       if(manual_override) {
           // Manual control - user decides LED status regardless of optimization
           room_usage = led_status ? 0.18 : 0.08;  // Kitchen uses more energy (appliances)
