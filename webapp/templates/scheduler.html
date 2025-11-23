@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Temperature Schedule Manager</title>
+
+    <!-- External Libraries -->
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+
+    <!-- Favicons -->
+    <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}">
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
+
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/common.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/scheduler.css') }}">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📅 Temperature Schedule Manager</h1>
+            <p>Configure hour-by-hour temperature schedules for your smart heating system</p>
+
+            <div class="status-indicators">
+                <div class="status-indicator" id="mqtt-status">
+                    <span>🔌</span> MQTT: <span id="mqtt-text">Connecting...</span>
+                </div>
+                <div class="status-indicator" id="db-status">
+                    <span>🗄️</span> Database: <span id="db-text">Connecting...</span>
+                </div>
+                <div class="status-indicator" id="nodes-status">
+                    <span>📡</span> Nodes Online: <span id="nodes-count">0</span>
+                </div>
+                <div class="status-indicator" id="ai-status">
+                    <span>🔥</span> Heating System: <span id="ai-text">Initializing...</span>
+                </div>
+            </div>
+
+            <div class="nav-links">
+                <a href="/" class="nav-link">📊 Dashboard</a>
+                <a href="/analytics" class="nav-link">📈 Analytics</a>
+                <a href="/scheduler" class="nav-link active">📅 Scheduler</a>
+            </div>
+        </div>
+
+        <!-- Schedule Management Controls -->
+        <div class="card schedule-manager">
+            <h3>🗂️ Schedule Management</h3>
+            <div class="schedule-controls">
+                <div class="control-row">
+                    <div class="control-group">
+                        <label for="schedule-name">Schedule Name:</label>
+                        <input type="text" id="schedule-name" placeholder="My Custom Schedule" />
+                    </div>
+                    <div class="control-group">
+                        <label for="schedule-description">Description:</label>
+                        <input type="text" id="schedule-description" placeholder="Comfortable weekday schedule" />
+                    </div>
+                </div>
+
+                <div class="control-row">
+                    <div class="button-group">
+                        <button class="btn btn-primary" onclick="saveSchedule()">💾 Save Schedule</button>
+                        <button class="btn" onclick="loadSchedule()">📂 Load Schedule</button>
+                        <button class="btn" onclick="resetSchedule()">🔄 Reset</button>
+                        <button class="btn btn-success" onclick="applyToDevice()">📤 Apply to Device</button>
+                        <button class="btn btn-success" onclick="applyToAllDevices()">📤 Apply to All</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Saved Schedules -->
+        <div class="card saved-schedules">
+            <h3>📚 Saved Schedules</h3>
+            <div id="saved-schedules-list" class="schedules-list">
+                <p class="loading">Loading schedules...</p>
+            </div>
+        </div>
+
+        <!-- Quick Presets -->
+        <div class="card quick-presets">
+            <h3>⚡ Quick Presets</h3>
+            <div class="preset-buttons">
+                <button class="btn preset-btn" onclick="loadPreset('comfort')">
+                    🏠 Comfort<br><small>22°C day, 18°C night</small>
+                </button>
+                <button class="btn preset-btn" onclick="loadPreset('eco')">
+                    🌱 Eco<br><small>20°C day, 16°C night</small>
+                </button>
+                <button class="btn preset-btn" onclick="loadPreset('work')">
+                    💼 Work<br><small>22°C working hours</small>
+                </button>
+                <button class="btn preset-btn" onclick="loadPreset('away')">
+                    ✈️ Away<br><small>15°C constant</small>
+                </button>
+            </div>
+        </div>
+
+        <!-- Schedule Editor -->
+        <div class="card schedule-editor">
+            <h3>✏️ Schedule Editor</h3>
+            <div class="editor-controls">
+                <div class="control-group">
+                    <label for="day-selector">Day:</label>
+                    <select id="day-selector" onchange="switchDay()">
+                        <option value="0">Monday</option>
+                        <option value="1">Tuesday</option>
+                        <option value="2">Wednesday</option>
+                        <option value="3">Thursday</option>
+                        <option value="4">Friday</option>
+                        <option value="5">Saturday</option>
+                        <option value="6">Sunday</option>
+                    </select>
+                </div>
+
+                <div class="control-group">
+                    <label>Quick Actions:</label>
+                    <button class="btn btn-sm" onclick="copyDay()">📋 Copy Day</button>
+                    <button class="btn btn-sm" onclick="pasteDay()">📄 Paste Day</button>
+                    <button class="btn btn-sm" onclick="fillDay()">🔢 Fill Day</button>
+                    <button class="btn btn-sm" onclick="copyWeekday()">📅 Copy to Weekdays</button>
+                    <button class="btn btn-sm" onclick="copyWeekend()">🏖️ Copy to Weekend</button>
+                </div>
+            </div>
+
+            <!-- Hour Grid -->
+            <div class="hour-grid" id="hour-grid">
+                <!-- Dynamically generated hour cells -->
+            </div>
+
+            <!-- Temperature Input -->
+            <div class="temp-input-section">
+                <label for="temp-input">Set Temperature (°C):</label>
+                <input type="number" id="temp-input" min="10" max="30" step="0.5" value="20" />
+                <button class="btn" onclick="applyTempToSelected()">✓ Apply</button>
+                <div class="temp-range-info">
+                    <span>Min: 10°C</span>
+                    <span>Max: 30°C</span>
+                    <span>Unset: 0</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Visual Week Overview -->
+        <div class="card week-overview">
+            <h3>📊 Week Overview</h3>
+            <canvas id="weekOverviewChart"></canvas>
+        </div>
+
+        <!-- Device Selection -->
+        <div class="card device-selection">
+            <h3>📡 Target Device</h3>
+            <div id="device-list" class="device-list">
+                <p class="loading">Loading devices...</p>
+            </div>
+        </div>
+
+        <!-- Response Messages -->
+        <div class="response-message" id="response-message"></div>
+
+        <!-- Dark Mode Toggle -->
+        <div class="dark-mode-toggle" onclick="toggleDarkMode()" title="Toggle Dark Mode">
+            🌙
+        </div>
+    </div>
+
+    <!-- Include Chart.js for visualization -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <!-- Custom JavaScript -->
+    <script src="{{ url_for('static', filename='js/common.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/scheduler.js') }}"></script>
+</body>
+</html>

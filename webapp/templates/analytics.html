@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Heating Analytics - Smart Heating System</title>
+
+    <!-- Favicons -->
+    <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}">
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/common.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/analytics.css') }}">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📈 Heating Analytics Dashboard</h1>
+            <p>Advanced temperature analytics and heating efficiency insights</p>
+
+            <div class="status-indicators">
+                <div class="status-indicator" id="mqtt-status">
+                    <span>🔌</span> MQTT: <span id="mqtt-text">Connecting...</span>
+                </div>
+                <div class="status-indicator" id="db-status">
+                    <span>🗄️</span> Database: <span id="db-text">Connecting...</span>
+                </div>
+                <div class="status-indicator" id="nodes-status">
+                    <span>📡</span> Nodes Online: <span id="nodes-count">0</span>
+                </div>
+                <div class="status-indicator" id="ai-status">
+                    <span>🔥</span> Heating System: <span id="ai-text">Initializing...</span>
+                </div>
+            </div>
+
+            <div class="nav-links">
+                <a href="/" class="nav-link">📊 Dashboard</a>
+                <a href="/analytics" class="nav-link">📈 Analytics</a>
+                <a href="/scheduler" class="nav-link">📅 Scheduler</a>
+            </div>
+        </div>
+
+        <div class="data-controls">
+            <h3>📊 Data Visualization Controls</h3>
+            <div class="slider-container">
+                <label for="data-points-slider">Time Range:</label>
+                <input type="range" id="data-points-slider" class="data-points-slider" min="1" max="100" step="1" value="20" oninput="updateDataPoints(this.value)">
+                <div class="slider-indicators">
+                    <span class="slider-indicator">1</span>
+                    <span class="slider-indicator">10</span>
+                    <span class="slider-indicator">20</span>
+                    <span class="slider-indicator">30</span>
+                    <span class="slider-indicator">40</span>
+                    <span class="slider-indicator">50</span>
+                    <span class="slider-indicator">60</span>
+                    <span class="slider-indicator">70</span>
+                    <span class="slider-indicator">80</span>
+                    <span class="slider-indicator">90</span>
+                    <span class="slider-indicator">100</span>
+                </div>
+            </div>
+            <div class="control-buttons">
+                <button id="update-stats-btn" class="update-btn" onclick="updateStatistics()">🔄 Update Statistics</button>
+            </div>
+        </div>
+
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-value stat-consumption" id="total-heating-time">0</div>
+                <div class="stat-label">Total Heating Hours</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value stat-saved" id="avg-temperature">0.0</div>
+                <div class="stat-label">Average Temperature (°C)</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value stat-efficiency" id="efficiency">0.0</div>
+                <div class="stat-label">Heating Efficiency (%)</div>
+            </div>
+        </div>
+
+        <div class="analytics-grid">
+            <div class="chart-card">
+                <div class="chart-title">📊 Heating Activity by Zone</div>
+                <div class="chart-container">
+                    <canvas id="roomConsumptionChart"></canvas>
+                </div>
+            </div>
+
+            <div class="chart-card">
+                <div class="chart-title">🕐 Daily Temperature Pattern</div>
+                <div class="chart-container">
+                    <canvas id="hourlyPatternChart"></canvas>
+                </div>
+            </div>
+
+            <div class="chart-card">
+                <div class="chart-title">🌡️ Temperature vs Target</div>
+                <div class="chart-container">
+                    <canvas id="temperatureTrendChart"></canvas>
+                </div>
+            </div>
+
+            <div class="chart-card">
+                <div class="chart-title">💡 Light Level Analysis</div>
+                <div class="chart-container">
+                    <canvas id="lightAnalysisChart"></canvas>
+                </div>
+            </div>
+
+            <div class="chart-card full-width">
+                <div class="chart-title">📈 Historical Energy Trends</div>
+                <div class="chart-container">
+                    <canvas id="historicalChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Dark Mode Toggle -->
+        <div class="dark-mode-toggle" onclick="toggleDarkMode()" title="Toggle Dark Mode">
+            🌙
+        </div>
+    </div>
+
+    <!-- Load common utilities and modular analytics page -->
+    <script src="{{ url_for('static', filename='js/common.js') }}"></script>
+    <script type="module" src="{{ url_for('static', filename='js/analytics/main.js') }}"></script>
+</body>
+</html>

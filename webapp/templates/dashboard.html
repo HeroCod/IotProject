@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Heating Management Dashboard</title>
+
+    <!-- Favicons -->
+    <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}">
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
+
+    <!-- External Libraries -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/common.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🏠 Smart Heating Management Dashboard</h1>
+            <p>AI-powered temperature prediction and intelligent heating control</p>
+
+            <div class="status-indicators">
+                <div class="status-indicator" id="mqtt-status">
+                    <span>🔌</span> MQTT: <span id="mqtt-text">Connecting...</span>
+                </div>
+                <div class="status-indicator" id="db-status">
+                    <span>🗄️</span> Database: <span id="db-text">Connecting...</span>
+                </div>
+                <div class="status-indicator" id="nodes-status">
+                    <span>📡</span> Nodes Online: <span id="nodes-count">0</span>
+                </div>
+                <div class="status-indicator" id="ai-status">
+                    <span>🔥</span> Heating System: <span id="ai-text">Initializing...</span>
+                </div>
+            </div>
+
+            <div class="nav-links">
+                <a href="/" class="nav-link">📊 Dashboard</a>
+                <a href="/analytics" class="nav-link">📈 Analytics</a>
+                <a href="/scheduler" class="nav-link">📅 Scheduler</a>
+            </div>
+        </div>
+
+        <div class="data-controls">
+            <h3>📊 Data Visualization Controls</h3>
+            <div class="slider-container">
+                <label for="data-points-slider">Time Range:</label>
+                <input type="range" id="data-points-slider" class="data-points-slider" min="1" max="100" value="27" oninput="updateDataPoints(this.value)">
+                <div class="slider-labels">
+                    <span>3 min</span>
+                    <span>72 hours</span>
+                </div>
+                <div class="slider-indicators">
+                    <span id="slider-indicator-1">30 min</span>
+                    <span id="slider-indicator-2">60 points</span>
+                    <span id="slider-indicator-3" style="color: #ffa500; font-style: italic;">Ready</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Dynamic heating statistics cards will be inserted here -->
+        <div class="grid" id="heating-stats-cards">
+        </div>
+
+        <!-- Charts Grid - Half Page Layout -->
+        <div class="chart-grid">
+            <div class="card chart-container">
+                <h3>🌡️ Temperature Overview</h3>
+                <canvas id="temperatureChart"></canvas>
+            </div>
+
+            <!-- Temperature Prediction Chart -->
+            <div class="card chart-container">
+                <h3>🔮 Temperature Prediction & Target</h3>
+                <canvas id="predictionChart"></canvas>
+            </div>
+
+            <!-- Heating Status Chart -->
+            <div class="card chart-container">
+                <h3>🔥 Heating System Activity</h3>
+                <canvas id="heatingChart"></canvas>
+            </div>
+
+            <!-- Energy Consumption Chart -->
+            <div class="card chart-container">
+                <h3>⚡ Heating Energy Consumption</h3>
+                <canvas id="energyChart"></canvas>
+            </div>
+        </div>
+
+        <!-- Dynamic sensor cards will be inserted here -->
+        <div class="grid" id="sensor-cards">
+        </div>
+
+        <!-- Global Controls Section -->
+        <div class="card global-controls-card">
+            <h3>🌐 Global Quick Controls</h3>
+            <div class="global-controls-grid">
+                <div class="control-group">
+                    <h4>💡 All Lights</h4>
+                    <div class="control-group-info">
+                        <p>Control all LED lights across all devices.</p>
+                    </div>
+                    <div class="control-buttons-grid">
+                        <button class="btn btn-on" onclick="globalLightCommand('on')">
+                            💡 All Lights ON
+                        </button>
+                        <button class="btn btn-off" onclick="globalLightCommand('off')">
+                            💡 All Lights OFF
+                        </button>
+                        <button class="btn" onclick="globalLightCommand('auto')">
+                            🤖 Lights Auto Mode
+                        </button>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <h4>🔥 All Heating</h4>
+                    <div class="control-group-info">
+                        <p>Control all heating systems across all devices.</p>
+                    </div>
+                    <div class="control-buttons-grid">
+                        <button class="btn btn-success" onclick="globalHeatingCommand('on')">
+                            🔥 All Heat ON
+                        </button>
+                        <button class="btn btn-danger" onclick="globalHeatingCommand('off')">
+                            ❄️ All Heat OFF
+                        </button>
+                        <button class="btn" onclick="globalHeatingCommand('auto')">
+                            🤖 Heat Auto Mode
+                        </button>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <h4>🗑️ System Maintenance</h4>
+                    <div class="control-group-info">
+                        <p>Clear historical data, sync time, or refresh system status.</p>
+                    </div>
+                    <div class="control-buttons-grid">
+                        <button class="btn" onclick="refreshSystem()">
+                            🔄 Refresh System
+                        </button>
+                        <button class="btn" onclick="forceClockSync()">
+                            🕐 Force Clock Sync
+                        </button>
+                        <button class="btn btn-danger" onclick="clearHistoricalData()">
+                            🗑️ Clear All Data
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <div class="response-message" id="global-response"></div>
+        </div>
+
+        <!-- Dark Mode Toggle -->
+        <div class="dark-mode-toggle" onclick="toggleDarkMode()" title="Toggle Dark Mode">
+            🌙
+        </div>
+    </div>
+
+    <!-- Custom JavaScript - Modular Dashboard -->
+    <script src="{{ url_for('static', filename='js/common.js') }}"></script>
+
+    <!-- Dashboard modules loaded as ES6 modules -->
+    <script type="module" src="{{ url_for('static', filename='js/dashboard/config.js') }}"></script>
+    <script type="module" src="{{ url_for('static', filename='js/dashboard/dataUtils.js') }}"></script>
+    <script type="module" src="{{ url_for('static', filename='js/dashboard/charts.js') }}"></script>
+    <script type="module" src="{{ url_for('static', filename='js/dashboard/deviceControls.js') }}"></script>
+    <script type="module" src="{{ url_for('static', filename='js/dashboard/sensorCards.js') }}"></script>
+    <script type="module" src="{{ url_for('static', filename='js/dashboard/globalControls.js') }}"></script>
+    <script type="module" src="{{ url_for('static', filename='js/dashboard/historicalData.js') }}"></script>
+    <script type="module" src="{{ url_for('static', filename='js/dashboard/socketHandlers.js') }}"></script>
+    <script type="module" src="{{ url_for('static', filename='js/dashboard/main.js') }}"></script>
+</body>
+</html>

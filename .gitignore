@@ -1,0 +1,8 @@
+*.pyc
+logs/
+venv/
+venv
+venv/*
+contiki-ng/
+contiki-ng/*
+contiki-ng

@@ -1,0 +1,14 @@
+#ifndef PROJECT_CONF_H_
+    #define PROJECT_CONF_H_
+
+    #define UIP_CONF_TCP 1
+
+    #define LOG_CONF_LEVEL_APP LOG_LEVEL_INFO
+    #define LOG_CONF_LEVEL_COAP LOG_LEVEL_INFO
+    #define LOG_CONF_LEVEL_MQTT LOG_LEVEL_INFO
+    #define LOG_CONF_LEVEL_RPL LOG_LEVEL_INFO
+
+
+    #define UIP_CONF_BUFFER_SIZE 256
+
+#endif /* PROJECT_CONF_H_ */

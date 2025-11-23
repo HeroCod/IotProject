@@ -1,0 +1,41 @@
+Explanation of Variables:
+
+TypPS: 		Represents the average particle size measured in micrometers (µm).
+oxygen: 	Represents the concentration of oxygen, recorded in volume percent.
+pm10: 		Represents the concentration of particulate matter 10 micrometers or less in diameter, measured in micrograms per cubic meter (µg/m3).
+cnt0_5: 	Indicates the total count of particulate matter particles greater than 0.5 micrometers in diameter.
+co: 		Represents the concentration of carbon monoxide (CO), measured in parts per million (ppm).
+temperature: 	Records the temperature in degrees Celsius (°C).
+performance: 	A calculated performance index.
+co2: 		Represents the concentration of carbon dioxide (CO2), measured in parts per million (ppm).
+measuretime: 	The time in milliseconds (ms) taken for the entire previous measurement cycle.
+so2: 		Represents the concentration of sulfur dioxide (SO2), measured in micrograms per cubic meter (µg/m3).
+no2: 		Represents the concentration of nitrogen dioxide (NO2), measured in micrograms per cubic meter (µg/m3).
+cnt5: 		Indicates the total count of particulate matter particles greater than 5 micrometers in diameter.
+timestamp: 	The timestamp corresponding to the measurements, in Unix Epoch time format (milliseconds).
+pm1: 		Represents the concentration of particulate matter 1.0 micrometer or less in diameter, measured in micrograms per cubic meter (µg/m3).
+cnt1: 		Indicates the total count of particulate matter particles greater than 1 micrometer in diameter.
+dewpt: 		Represents the dew point, measured in degrees Celsius (°C).
+tvoc: 		Records the total volatile organic compounds (TVOC) concentration, measured in parts per billion (ppb).
+pressure: 	Indicates the atmospheric pressure, measured in hectopascals (hPa).
+cnt10: 		Indicates the total count of particulate matter particles greater than 10 micrometers in diameter.
+dCO2dt: 	Represents the rate of change of CO2 concentration, measured in parts per million per second (ppm/s).
+sound_max: 	Records the maximum noise level, measured in decibels (dB(A)).
+health: 	A calculated health index. A range of 0 to 1000 for normal assessment, -200 for gas alarm, and -800 for fire alarm.
+temperature_o2: Records the temperature in degrees Celsius (°C).
+cnt2_5: 	Indicates the total count of particulate matter particles greater than 2.5 micrometers in diameter.
+o3: 		Represents the concentration of ozone (O3), measured in micrograms per cubic meter (µg/m3).
+humidity: 	Represents the relative humidity, measured in percent (%).
+dHdt: 		Records the rate of change of absolute humidity, measured in grams per cubic meter per second (g/m3/s).
+humidity_abs: 	Indicates the absolute humidity, measured in grams per cubic meter (g/m3).
+sound: 		Represents the noise level, measured in decibels (dB(A)).
+pm2_5: 		Represents the concentration of particulate matter 2.5 micrometers or less in diameter, measured in micrograms per cubic meter (µg/m3).
+cnt0_3: 	Indicates the total count of particulate matter particles greater than 0.3 micrometers in diameter.
+
+
+Anomalies in Data:
+
+09 July 2023:	Measurement error with regard to fine dust values due to sudden increase in air humidity
+17 April 2023: 	Lab power outage. Probably triggered by a short circuit
+21 May 2023: 	Large fire in Herzogenrath (9-10km away from measuring location)
+
