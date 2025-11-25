@@ -699,6 +699,25 @@ def realtime_updates():
                 logger.debug("📊 No changes in graph data, skipping emit")
                 print(f"DEBUG: No changes, skipping emit")
 
+            # Emit sensor updates for each device to update the cards
+            for device_id, sensor_data in latest_sensor_data.items():
+                socketio.emit('sensor_update', {
+                    'device_id': device_id,
+                    'data': sensor_data,
+                    'timestamp': sensor_data.get('timestamp', datetime.now().isoformat()),
+                    'type': 'sensor'
+                })
+
+            # Emit system status update periodically (every 10 seconds or so)
+            # For simplicity, emit on every update for now
+            system_status = {
+                'latest_data': latest_sensor_data,
+                'energy_stats': energy_stats if isinstance(energy_stats, dict) else {},
+                'optimizer_active': optimizer_active,
+                'timestamp': datetime.now().isoformat()
+            }
+            socketio.emit('system_status', system_status)
+
         except Exception as e:
             logger.error(f"Graph real-time update error: {e}")
             print(f"DEBUG: Exception in realtime_updates: {e}")

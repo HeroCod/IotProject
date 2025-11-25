@@ -126,15 +126,19 @@ async def sync_device_clock(device_id: str) -> bool:
         # Get device URI, replacing /settings with /time_sync
         settings_uri = get_device_uri(device_id)
         if not settings_uri:
-            logger.warning(f"⏰ Cannot sync {device_id}: no URI available")
-            return False
+            # Try to discover neighbors if URI not found
+            discover_border_router_neighbors()
+            settings_uri = get_device_uri(device_id)
+            if not settings_uri:
+                logger.warning(f"⏰ Cannot sync {device_id}: no URI available after discovery")
+                return False
 
         # Replace /settings with /time_sync
         time_sync_uri = settings_uri.replace('/settings', '/time_sync')
 
         # Get current server time
         now = datetime.now()
-        day_of_week = now.weekday()  # 0=Monday, 6=Sunday
+        day_of_week = now.weekday()  # 0=Monday 6=Sunday
         hour = now.hour
         minute = now.minute
 
@@ -2124,8 +2128,11 @@ def force_clock_sync():
         synced_devices = []
         failed_devices = []
 
-        # Get all known devices
-        devices = list(latest_sensor_data.keys())
+        # Discover border router neighbors to ensure we have the latest devices
+        discover_border_router_neighbors()
+
+        # Get all known devices from both sensor data and border router mappings
+        devices = list(set(latest_sensor_data.keys()) | set(border_router_neighbors.keys()))
         
         if not devices:
             return jsonify({
@@ -2591,6 +2598,9 @@ def periodic_time_sync_broadcast():
         try:
             # Broadcast time sync every hour (3600 seconds)
             logger.info("⏰ Broadcasting time sync to all nodes...")
+
+            # Discover border router neighbors to ensure we have the latest devices
+            discover_border_router_neighbors()
 
             # Get all known device IDs from latest sensor data and border router mappings
             all_device_ids = set(latest_sensor_data.keys()) | set(border_router_neighbors.keys())
